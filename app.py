@@ -79,7 +79,9 @@ TIMEZONE_NAME = os.getenv("CCTV_TIMEZONE", "Asia/Bangkok")
 try:
     LOCAL_TZ = ZoneInfo(TIMEZONE_NAME)
 except Exception:
-    LOCAL_TZ = ZoneInfo("Asia/Bangkok")
+    # Windows Python installations may not include the IANA tzdata package.
+    # Bangkok has no daylight-saving changes, so UTC+7 is a safe fallback.
+    LOCAL_TZ = dt_timezone(timedelta(hours=7), "Asia/Bangkok")
 
 LIVE_HOST = os.getenv("CCTV_LIVE_HOST", "arit-camera.rbru.ac.th")
 LIVE_PORT = env_int("CCTV_LIVE_PORT", 554)

@@ -21,6 +21,6 @@ winget install --id Gyan.FFmpeg --exact --source winget --accept-source-agreemen
 
 echo.
 echo ติดตั้งส่วนประกอบที่จำเป็นเสร็จแล้ว
-echo ปิดหน้าต่างนี้แล้วเปิดใหม่ก่อนใช้ run_cctv_windows.bat
+echo ปิดหน้าต่างนี้แล้วเปิดใหม่ก่อนใช้ เปิดโปรแกรม_windows.bat
 echo Node.js ไม่จำเป็นสำหรับโปรเจกต์เวอร์ชันปัจจุบัน
 pause
