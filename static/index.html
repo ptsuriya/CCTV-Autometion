@@ -258,7 +258,7 @@ winget install --id Gyan.FFmpeg --exact</pre>
   }
 
   function imageTile(image, label) {
-    return `<a href="${image.url}" target="_blank" download class="group block overflow-hidden rounded-xl border border-white/10 bg-slate-900/70"><img src="${image.url}" alt="${image.name}" loading="lazy" class="aspect-video w-full object-cover transition duration-300 group-hover:scale-105"><div class="truncate px-2 py-2 text-xs text-slate-400">${label || image.name}</div></a>`;
+    return `<a href="${image.url}" target="_blank" rel="noopener" class="group block overflow-hidden rounded-xl border border-white/10 bg-slate-900/70"><img src="${image.url}" alt="${image.name}" loading="lazy" class="aspect-video w-full object-cover transition duration-300 group-hover:scale-105"><div class="truncate px-2 py-2 text-xs text-slate-400">${label || image.name}</div></a>`;
   }
 
   function renderResults(batches) {
@@ -274,7 +274,7 @@ winget install --id Gyan.FFmpeg --exact</pre>
         </div>
         ${group.rounds.map((batch) => `
           <div class="border-b border-white/10 p-4 last:border-b-0">
-            <div class="mb-3 flex flex-wrap items-center justify-between gap-2"><div class="font-bold text-cyan-200">${formatResultLabel(batch)}</div>${batch.collage ? `<a href="${batch.collage}" target="_blank" download class="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-400">ดาวน์โหลดภาพรวม</a>` : ''}</div>
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2"><div class="font-bold text-cyan-200">${formatResultLabel(batch)}</div>${batch.collage ? `<a href="${batch.collage}" target="_blank" rel="noopener" class="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-400">เปิดภาพรวม</a>` : ''}</div>
             ${batch.collage ? `<a href="${batch.collage}" target="_blank"><img src="${batch.collage}" loading="lazy" class="w-full rounded-xl" alt="ภาพรวม ${batch.date} ${batch.time}"></a>` : '<div class="rounded-xl border border-dashed border-white/10 p-6 text-center text-sm text-slate-500">ไม่มีภาพรวม</div>'}
             <div class="mt-4 mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">รูปเดี่ยวที่เลือก</div>
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">${batch.separate.length ? batch.separate.map((image) => imageTile(image)).join('') : '<div class="col-span-full text-sm text-slate-500">ไม่มีรูปเดี่ยว</div>'}</div>
