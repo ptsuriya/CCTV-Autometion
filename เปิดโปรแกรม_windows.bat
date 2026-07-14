@@ -12,7 +12,7 @@ if not exist ".env" (
 where python >nul 2>&1
 if errorlevel 1 (
   echo ไม่พบ Python ใน PATH
-  echo ให้รัน install_windows.bat แล้วเปิดหน้าต่างใหม่
+  echo ให้รัน ติดตั้งระบบ_windows.bat แล้วเปิดหน้าต่างใหม่
   pause
   exit /b 1
 )

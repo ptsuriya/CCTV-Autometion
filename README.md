@@ -62,7 +62,7 @@ brew install node
 
 ### Windows
 
-ถ้าใช้ Windows 10/11 ที่มี `winget` ให้ดับเบิลคลิก `install_windows.bat` หรือใช้คำสั่งใน PowerShell/Command Prompt:
+ถ้าใช้ Windows 10/11 ที่มี `winget` ให้ดับเบิลคลิก `ติดตั้งระบบ_windows.bat` หรือใช้คำสั่งใน PowerShell/Command Prompt:
 
 ```bat
 winget install --id Python.Python.3.12 --exact --source winget
