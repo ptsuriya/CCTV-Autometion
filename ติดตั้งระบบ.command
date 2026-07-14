@@ -28,9 +28,21 @@ else
   brew install ffmpeg
 fi
 
+if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+  echo "พบ Node.js: $(node --version)"
+else
+  echo "กำลังติดตั้ง Node.js สำหรับ build หน้า React..."
+  brew install node
+fi
+
+echo "กำลังติดตั้งแพ็กเกจ React และ build หน้าเว็บ..."
+npm --prefix frontend install
+npm --prefix frontend run build
+
 echo
-echo "ติดตั้งส่วนประกอบที่จำเป็นเรียบร้อยแล้ว"
+echo "ติดตั้งส่วนประกอบและ build หน้าเว็บเรียบร้อยแล้ว"
 echo "Web base พร้อมใช้งานแล้ว"
+echo "Node.js ใช้ตอนติดตั้ง/build เท่านั้น การเปิดโปรแกรมใช้ Python เสิร์ฟไฟล์ที่ build แล้ว"
 echo "หมายเหตุ: Electron เก็บไว้ใน developer/electron และยังไม่ใช้ในรุ่นนี้"
 read -k 1 "?กดปุ่มใดก็ได้เพื่อปิดหน้าต่าง..."
 echo

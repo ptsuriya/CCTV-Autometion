@@ -4,6 +4,7 @@
 import json
 import logging
 import math
+import mimetypes
 import os
 import re
 import shutil
@@ -714,6 +715,18 @@ def safe_capture_path(request_path):
     return candidate if candidate.is_file() else None
 
 
+def safe_static_path(request_path):
+    relative = unquote(request_path.lstrip("/"))
+    base = (ROOT / "static").resolve()
+    candidate = (ROOT / "static" / relative).resolve()
+    try:
+        if os.path.commonpath([str(base), str(candidate)]) != str(base):
+            return None
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
 def capture_url(path):
     relative = path.resolve().relative_to(CAPTURES_DIR.resolve()).as_posix()
     return "/captures/" + quote(relative, safe="/")
@@ -801,6 +814,25 @@ def export_job(job_id):
     return export_path, len(matches)
 
 
+def delete_job_results(job_id):
+    matches = job_manifests(job_id)
+    if not matches:
+        raise ValueError("ไม่พบผลลัพธ์ของงานนี้")
+    if JOB.get("running") and str(JOB.get("id")) == str(job_id):
+        raise ValueError("ไม่สามารถลบงานที่กำลังทำงานอยู่")
+    removed_rounds = 0
+    for manifest_path, _manifest in matches:
+        batch_dir = manifest_path.parent.resolve()
+        captures_base = CAPTURES_DIR.resolve()
+        if os.path.commonpath([str(captures_base), str(batch_dir)]) != str(captures_base):
+            raise ValueError("เส้นทางผลลัพธ์ไม่ถูกต้อง")
+        shutil.rmtree(batch_dir)
+        removed_rounds += 1
+    for export_path in EXPORTS_DIR.glob("*_%s.zip" % job_id):
+        export_path.unlink(missing_ok=True)
+    return removed_rounds
+
+
 def list_result_batches(limit=12):
     batches = []
     manifests = sorted(
@@ -864,6 +896,20 @@ class Handler(BaseHTTPRequestHandler):
             body = guide_path.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if parsed.path.startswith("/assets/") or parsed.path in {"/night-night-cctv.png"}:
+            path = safe_static_path(parsed.path)
+            if not path:
+                self.send_error(404)
+                return
+            body = path.read_bytes()
+            content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -1047,6 +1093,10 @@ class Handler(BaseHTTPRequestHandler):
                     "url": export_url(export_path),
                     "path": str(export_path),
                 })
+                return
+            if parsed.path == "/api/delete-results":
+                removed_rounds = delete_job_results(payload.get("job_id"))
+                self.send_json({"ok": True, "removed_rounds": removed_rounds})
                 return
             if parsed.path == "/api/cancel":
                 with JOB_LOCK:
