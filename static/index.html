@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCTV Automation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: { ink: '#0f172a', brand: '#4f46e5' } } }
+    }
+  </script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+  <div class="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(79,70,229,0.28),_transparent_35%),radial-gradient(circle_at_bottom_left,_rgba(14,165,233,0.14),_transparent_30%)]"></div>
+  <main class="relative mx-auto max-w-6xl px-5 py-8 sm:px-8">
+    <header class="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <div class="mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-400/30 bg-indigo-400/10 px-3 py-1 text-xs font-semibold text-indigo-200">
+          <span class="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_#34d399]"></span>
+          LOCAL CCTV AUTOMATION
+        </div>
+        <h1 class="text-3xl font-black tracking-tight sm:text-4xl">จัดการภาพกล้องวงจรปิด</h1>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-400">ภาพรวม 18 ช่อง · เลือกรูปเดี่ยวได้ · ตั้งเวลาข้ามคืนหรือค้นย้อนหลังแบบข้ามวัน</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <a href="#guide" class="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-slate-200 backdrop-blur transition hover:bg-white/10">คู่มือ</a>
+        <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-right backdrop-blur">
+          <div class="text-xs uppercase tracking-wider text-slate-500">Timezone</div>
+          <div id="timezone" class="mt-1 font-semibold text-slate-200">Asia/Bangkok</div>
+        </div>
+      </div>
+    </header>
+
+    <section class="mb-6 grid gap-4 sm:grid-cols-3">
+      <div class="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">ช่องภาพรวม</div>
+        <div id="channelCount" class="mt-2 text-3xl font-black text-white">-</div>
+        <div class="mt-1 text-sm text-slate-400">แคปพร้อมกันในแต่ละรอบ</div>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">รอบข้ามคืน</div>
+        <div id="scheduleTimes" class="mt-2 text-2xl font-black text-cyan-300">23:00 · 04:00</div>
+        <div id="scheduleState" class="mt-1 text-sm text-slate-400">ยังไม่เปิดใช้งาน</div>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">สถานะงาน</div>
+        <div id="jobState" class="mt-2 text-2xl font-black text-emerald-300">พร้อมทำงาน</div>
+        <div id="jobProgress" class="mt-1 text-sm text-slate-400">0%</div>
+      </div>
+    </section>
+
+    <section class="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] shadow-2xl shadow-black/20 backdrop-blur-xl">
+      <div class="flex border-b border-white/10 bg-black/10 p-2">
+        <button data-mode="overnight" class="mode-button flex-1 rounded-2xl px-4 py-3 text-sm font-bold transition">บันทึกข้ามคืน</button>
+        <button data-mode="historical" class="mode-button flex-1 rounded-2xl px-4 py-3 text-sm font-bold transition">บันทึกย้อนหลัง</button>
+      </div>
+
+      <div id="overnightPanel" class="p-6 sm:p-8">
+        <div class="mb-7 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 class="text-2xl font-black">ตั้งเวลารันข้ามคืน</h2>
+            <p class="mt-1 text-sm text-slate-400">เปิดระบบแล้วปล่อยเครื่องทำงาน โปรแกรมจะแคปภาพสดตามเวลาที่กำหนด</p>
+          </div>
+          <span class="rounded-full bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-300">LIVE SCHEDULE</span>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-500">เวลารอบที่ 1</span>
+            <input id="scheduleTime1" type="time" value="23:00" class="mt-2 w-full rounded-xl border border-white/10 bg-slate-800 px-3 py-3 text-lg font-bold text-white outline-none focus:border-indigo-400">
+          </label>
+          <label class="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-500">เวลารอบที่ 2</span>
+            <input id="scheduleTime2" type="time" value="04:00" class="mt-2 w-full rounded-xl border border-white/10 bg-slate-800 px-3 py-3 text-lg font-bold text-white outline-none focus:border-indigo-400">
+          </label>
+        </div>
+        <div class="mt-5 flex flex-wrap gap-3">
+          <button id="saveSchedule" class="rounded-xl bg-indigo-500 px-5 py-3 text-sm font-bold shadow-lg shadow-indigo-500/20 transition hover:bg-indigo-400">บันทึกเวลา</button>
+          <button id="toggleSchedule" class="rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400">เปิดรันข้ามคืน</button>
+          <button id="liveNow" class="rounded-xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-bold transition hover:bg-white/15">ทดสอบแคปสดตอนนี้</button>
+        </div>
+      </div>
+
+      <div id="historicalPanel" class="hidden p-6 sm:p-8">
+        <div class="mb-7 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 class="text-2xl font-black">บันทึกย้อนหลังแบบข้ามคืน</h2>
+            <p class="mt-1 text-sm text-slate-400">เลือกวันที่เริ่มต้น ระบบจะใช้ช่วง 22:00–24:00 ของวันนั้น และ 03:00–06:00 ของวันถัดไป</p>
+          </div>
+          <span class="rounded-full bg-amber-400/10 px-3 py-1 text-xs font-semibold text-amber-300">PLAYBACK</span>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-3">
+          <label class="sm:col-span-2">
+            <span class="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">วันบันทึก / วันเริ่มต้น</span>
+            <input id="nightDate" type="date" class="w-full rounded-xl border border-white/10 bg-slate-800 px-3 py-3 font-bold text-white outline-none focus:border-indigo-400">
+          </label>
+          <label>
+            <span class="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">ค้นหาช่วง (วินาที)</span>
+            <input id="duration" type="number" min="1" value="60" class="w-full rounded-xl border border-white/10 bg-slate-800 px-3 py-3 font-bold text-white outline-none focus:border-indigo-400">
+          </label>
+        </div>
+
+        <div class="mt-5 grid gap-4 lg:grid-cols-2">
+          <div class="rounded-2xl border border-indigo-400/20 bg-indigo-400/5 p-5">
+            <div class="mb-4 flex items-center justify-between"><h3 class="font-black text-indigo-200">ช่วงที่ 1 · วันเริ่มต้น</h3><span class="text-xs text-slate-500">22:00–24:00</span></div>
+            <div class="grid grid-cols-3 gap-3">
+              <label><span class="mb-1 block text-xs text-slate-500">เริ่ม</span><input id="window1Start" type="time" value="22:00" class="w-full rounded-lg border border-white/10 bg-slate-800 px-2 py-2 text-white"></label>
+              <label><span class="mb-1 block text-xs text-slate-500">แคปเวลา</span><input id="capture1" type="time" value="23:00" class="w-full rounded-lg border border-white/10 bg-slate-800 px-2 py-2 font-bold text-cyan-300"></label>
+              <label><span class="mb-1 block text-xs text-slate-500">สิ้นสุด</span><input id="window1End" type="time" value="23:59" class="w-full rounded-lg border border-white/10 bg-slate-800 px-2 py-2 text-white"></label>
+            </div>
+          </div>
+          <div class="rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-5">
+            <div class="mb-4 flex items-center justify-between"><h3 class="font-black text-cyan-200">ช่วงที่ 2 · วันถัดไป</h3><span class="text-xs text-slate-500">03:00–06:00</span></div>
+            <div class="grid grid-cols-3 gap-3">
+              <label><span class="mb-1 block text-xs text-slate-500">เริ่ม</span><input id="window2Start" type="time" value="03:00" class="w-full rounded-lg border border-white/10 bg-slate-800 px-2 py-2 text-white"></label>
+              <label><span class="mb-1 block text-xs text-slate-500">แคปเวลา</span><input id="capture2" type="time" value="04:00" class="w-full rounded-lg border border-white/10 bg-slate-800 px-2 py-2 font-bold text-cyan-300"></label>
+              <label><span class="mb-1 block text-xs text-slate-500">สิ้นสุด</span><input id="window2End" type="time" value="06:00" class="w-full rounded-lg border border-white/10 bg-slate-800 px-2 py-2 text-white"></label>
+            </div>
+          </div>
+        </div>
+        <button id="historicalButton" class="mt-6 w-full rounded-xl bg-amber-500 px-5 py-3.5 text-sm font-black text-slate-950 shadow-lg shadow-amber-500/20 transition hover:bg-amber-400">บันทึกย้อนหลัง 2 ช่วงเวลา</button>
+      </div>
+    </section>
+
+    <section class="mt-6 rounded-3xl border border-white/10 bg-white/[0.06] p-6 backdrop-blur-xl sm:p-8">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div><h2 class="text-xl font-black">เลือกรูปเดี่ยว</h2><p class="mt-1 text-sm text-slate-400">ภาพรวมจะใช้ครบทุกช่อง ส่วนนี้คือช่องที่จะคัดลอกไปไว้ในโฟลเดอร์รูปเดี่ยว</p></div>
+        <div class="flex gap-2 text-xs"><button id="selectFirst" class="rounded-lg border border-white/10 px-3 py-2 text-slate-300 hover:bg-white/10">เลือก 4 ช่องแรก</button><button id="selectAll" class="rounded-lg border border-white/10 px-3 py-2 text-slate-300 hover:bg-white/10">เลือกทั้งหมด</button></div>
+      </div>
+      <div id="channels" class="mt-5 grid grid-cols-3 gap-2 sm:grid-cols-6 lg:grid-cols-9"></div>
+    </section>
+
+    <section class="mt-6 rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl">
+      <div class="mb-3 flex items-center justify-between"><h2 class="font-black">สถานะล่าสุด</h2><span id="statusPill" class="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-400">พร้อมทำงาน</span></div>
+      <div class="h-2 overflow-hidden rounded-full bg-slate-800"><div id="progressBar" class="h-full w-0 rounded-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all"></div></div>
+      <div class="mt-4 flex flex-wrap items-center gap-3">
+        <button id="cancelJob" disabled class="rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-rose-500/20 transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-40">ยกเลิกงาน</button>
+        <span class="text-xs text-slate-500">ใช้ได้เมื่อมีงานกำลังทำงาน หากดึงย้อนหลังนานหรือสั่งผิดสามารถหยุดได้ทันที</span>
+      </div>
+      <p id="statusText" class="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-400">กำลังเชื่อมต่อ...</p>
+      <p id="outputText" class="mt-2 break-all text-xs text-slate-500"></p>
+    </section>
+
+    <section class="mt-6 rounded-3xl border border-white/10 bg-white/[0.06] p-6 backdrop-blur-xl sm:p-8">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div><h2 class="text-xl font-black">ผลลัพธ์ภาพ</h2><p class="mt-1 text-sm text-slate-400">ภาพที่สั่งแคปจะแสดงตรงนี้ พร้อมเปิดดูหรือดาวน์โหลดไปส่งได้</p></div>
+        <button id="refreshResults" class="rounded-xl border border-white/10 px-4 py-2 text-sm font-bold text-slate-300 transition hover:bg-white/10">รีเฟรชผลลัพธ์</button>
+      </div>
+      <div id="results" class="mt-5 space-y-6"><div class="rounded-2xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-500">ยังไม่มีผลลัพธ์ภาพ</div></div>
+    </section>
+
+    <section id="guide" class="mt-6 scroll-mt-6 rounded-3xl border border-indigo-400/20 bg-indigo-400/[0.06] p-6 backdrop-blur-xl sm:p-8">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 class="text-2xl font-black">คู่มือการใช้งาน</h2>
+          <p class="mt-1 text-sm text-slate-400">CCTV Automation · ระบบแคปภาพกล้องวงจรปิดภายในเครื่อง</p>
+        </div>
+        <span class="rounded-full bg-indigo-400/10 px-3 py-1 text-xs font-semibold text-indigo-200">LOCAL PROJECT</span>
+      </div>
+      <div class="mt-6 grid gap-4 lg:grid-cols-2">
+        <article class="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+          <h3 class="font-black text-white">โปรเจกต์นี้ทำอะไรได้บ้าง</h3>
+          <ul class="mt-3 space-y-2 text-sm leading-6 text-slate-300">
+            <li>• แคปภาพรวมจากกล้องที่ตั้งไว้ทั้งหมด 18 ช่อง</li>
+            <li>• เลือกกล้องสำหรับจัดเก็บเป็นรูปเดี่ยวได้</li>
+            <li>• บันทึกข้ามคืนตามเวลา เช่น 23:00 และ 04:00</li>
+            <li>• ดึงภาพย้อนหลังแบบข้ามวัน และแสดงผลในเว็บ</li>
+            <li>• รวมภาพ ดาวน์โหลด และเปิดดูจากหน้าเว็บได้</li>
+          </ul>
+        </article>
+        <article class="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+          <h3 class="font-black text-white">เปิดโปรแกรมแบบง่าย</h3>
+          <ol class="mt-3 space-y-2 text-sm leading-6 text-slate-300">
+            <li>1. ดับเบิลคลิกไฟล์ <code class="rounded bg-white/10 px-1.5 py-0.5 text-indigo-200">เปิดโปรแกรม.command</code></li>
+            <li>2. โปรแกรมจะเปิดเซิร์ฟเวอร์และเปิดเว็บให้อัตโนมัติ</li>
+            <li>3. ถ้าเปิดอยู่แล้ว ไฟล์เดิมจะเปิดหน้าเว็บเดิมให้</li>
+            <li>4. ปิดหน้าต่าง Terminal เมื่อต้องการหยุดโปรแกรม</li>
+          </ol>
+        </article>
+        <article class="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+          <h3 class="font-black text-white">วิธีใช้งานในเว็บ</h3>
+          <ol class="mt-3 space-y-2 text-sm leading-6 text-slate-300">
+            <li>1. เลือกแท็บ <b>บันทึกข้ามคืน</b> หรือ <b>บันทึกย้อนหลัง</b></li>
+            <li>2. ตั้งเวลาและเลือกกล้องรูปเดี่ยวตามต้องการ</li>
+            <li>3. กดปุ่มเริ่มงาน แล้วดูความคืบหน้าที่สถานะล่าสุด</li>
+            <li>4. หากต้องหยุดระหว่างทาง กด <b>ยกเลิกงาน</b></li>
+            <li>5. ผลลัพธ์จะปรากฏในหัวข้อ <b>ผลลัพธ์ภาพ</b></li>
+          </ol>
+        </article>
+        <article class="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+          <h3 class="font-black text-white">ตั้งค่าเครื่องใหม่</h3>
+          <ol class="mt-3 space-y-2 text-sm leading-6 text-slate-300">
+            <li>1. คัดลอก <code class="rounded bg-white/10 px-1.5 py-0.5 text-indigo-200">.env.example</code> เป็น <code class="rounded bg-white/10 px-1.5 py-0.5 text-indigo-200">.env</code></li>
+            <li>2. กรอก Host, Port, Username และ Password ของ NVR</li>
+            <li>3. ตรวจสอบว่าติดตั้ง ffmpeg แล้ว</li>
+            <li>4. เปิดด้วย <code class="rounded bg-white/10 px-1.5 py-0.5 text-indigo-200">เปิดโปรแกรม.command</code></li>
+          </ol>
+          <p class="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 text-xs leading-5 text-amber-200">ไฟล์ .env ใช้เก็บข้อมูลลับและไม่ควรส่งต่อหรืออัปโหลดเข้า Git</p>
+        </article>
+        <article class="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+          <h3 class="font-black text-white">โปรแกรมที่ต้องติดตั้ง</h3>
+          <ul class="mt-3 space-y-2 text-sm leading-6 text-slate-300">
+            <li>• <b>Python 3</b> จำเป็นสำหรับรันเซิร์ฟเวอร์</li>
+            <li>• <b>ffmpeg</b> จำเป็นสำหรับดึงภาพจากกล้อง/NVR</li>
+            <li>• <b>Node.js ไม่จำเป็น</b> สำหรับเวอร์ชันปัจจุบัน</li>
+          </ul>
+          <pre class="mt-4 overflow-x-auto rounded-xl bg-black/40 p-3 text-xs leading-6 text-cyan-200">brew install python ffmpeg
+
+# Node.js เป็นตัวเลือก เฉพาะกรณีจะพัฒนาหน้าเว็บแบบ React เพิ่มเติม
+brew install node
+
+# Windows PowerShell / Command Prompt
+winget install --id Python.Python.3.12 --exact
+winget install --id Gyan.FFmpeg --exact</pre>
+          <p class="mt-3 text-xs leading-5 text-slate-500">หรือดับเบิลคลิกไฟล์ “ติดตั้งระบบ.command” เพื่อให้โปรแกรมตรวจสอบและติดตั้ง Python กับ ffmpeg ผ่าน Homebrew</p>
+          <p class="mt-2 text-xs leading-5 text-slate-500">Windows: ดับเบิลคลิก <code class="rounded bg-white/10 px-1.5 py-0.5 text-indigo-200">install_windows.bat</code> แล้วเปิดด้วย <code class="rounded bg-white/10 px-1.5 py-0.5 text-indigo-200">run_cctv_windows.bat</code></p>
+        </article>
+      </div>
+      <div class="mt-4 rounded-2xl border border-white/10 bg-slate-950/40 p-5 text-sm leading-6 text-slate-300">
+        <h3 class="font-black text-white">ตำแหน่งไฟล์ผลลัพธ์</h3>
+        <p class="mt-2"><code class="rounded bg-white/10 px-1.5 py-0.5 text-indigo-200">captures/วันที่/เวลา/</code> จะแยกเป็นโฟลเดอร์ <b>รวมกล้อง</b>, <b>รูปเดี่ยว</b> และไฟล์ <code class="rounded bg-white/10 px-1.5 py-0.5 text-indigo-200">manifest.json</code></p>
+        <p class="mt-2 text-slate-400">ถ้าบางกล้องไม่มีภาพ ระบบจะแสดงเป็น “เสร็จบางส่วน” พร้อมระบุหมายเลขกล้องที่มีปัญหา ส่วนภาพของกล้องอื่นยังใช้งานได้ตามปกติ</p>
+      </div>
+    </section>
+  </main>
+
+<script>
+  let channels = [];
+  let scheduleEnabled = false;
+  let scheduleTimes = ['23:00', '04:00'];
+  const $ = (id) => document.getElementById(id);
+  const selectedChannels = () => [...document.querySelectorAll('input[name="separate"]:checked')].map((el) => Number(el.value));
+
+  function formatResultLabel(batch) {
+    const dateParts = String(batch.date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const time = String(batch.time || '').replace('-', ':');
+    if (!dateParts) return `รอบเวรที่ ${batch.date || '-'} เวลา ${time || '-'}`;
+    const [, year, month, day] = dateParts;
+    const thaiMonths = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+    return `รอบเวรที่ ${Number(day)} ${thaiMonths[Number(month) - 1]} ${Number(year) + 543} เวลา ${time}`;
+  }
+
+  function imageTile(image, label) {
+    return `<a href="${image.url}" target="_blank" download class="group block overflow-hidden rounded-xl border border-white/10 bg-slate-900/70"><img src="${image.url}" alt="${image.name}" loading="lazy" class="aspect-video w-full object-cover transition duration-300 group-hover:scale-105"><div class="truncate px-2 py-2 text-xs text-slate-400">${label || image.name}</div></a>`;
+  }
+
+  function renderResults(batches) {
+    if (!batches.length) {
+      $('results').innerHTML = '<div class="rounded-2xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-500">ยังไม่มีผลลัพธ์ภาพ</div>';
+      return;
+    }
+    $('results').innerHTML = batches.map((batch) => `
+      <article class="overflow-hidden rounded-2xl border border-white/10 bg-slate-950/60">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+          <div><div class="font-black text-white">${formatResultLabel(batch)}</div><div class="text-xs text-slate-500">${batch.mode === 'historical' ? 'ย้อนหลัง' : 'ภาพสด'} · สำเร็จ ${batch.successful_channels.length} ช่อง</div></div>
+          ${batch.collage ? `<a href="${batch.collage}" target="_blank" download class="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-400">ดาวน์โหลดภาพรวม</a>` : ''}
+        </div>
+        ${batch.collage ? `<div class="border-b border-white/10 bg-black/20 p-3"><a href="${batch.collage}" target="_blank"><img src="${batch.collage}" loading="lazy" class="w-full rounded-xl" alt="ภาพรวม ${batch.date} ${batch.time}"></a></div>` : ''}
+        <div class="p-4">
+          <div class="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">รูปเดี่ยวที่เลือก</div>
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">${batch.separate.length ? batch.separate.map((image) => imageTile(image)).join('') : '<div class="col-span-full text-sm text-slate-500">ไม่มีรูปเดี่ยว</div>'}</div>
+          <details class="mt-4"><summary class="cursor-pointer text-xs font-bold text-slate-400">ดูภาพกล้องทั้งหมด ${batch.overview.length} ช่อง</summary><div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">${batch.overview.map((image) => imageTile(image)).join('')}</div></details>
+        </div>
+      </article>`).join('');
+  }
+
+  async function refreshResults() {
+    try {
+      const data = await (await fetch('/api/results')).json();
+      renderResults(data.batches || []);
+    } catch (error) {
+      $('results').innerHTML = `<div class="rounded-2xl border border-rose-400/20 bg-rose-400/5 p-5 text-sm text-rose-300">โหลดผลลัพธ์ไม่ได้: ${error}</div>`;
+    }
+  }
+
+  function setMode(mode) {
+    document.querySelectorAll('.mode-button').forEach((button) => {
+      const active = button.dataset.mode === mode;
+      button.className = 'mode-button flex-1 rounded-2xl px-4 py-3 text-sm font-bold transition ' + (active ? 'bg-white text-slate-900 shadow-lg' : 'text-slate-400 hover:bg-white/10 hover:text-white');
+    });
+    $('overnightPanel').classList.toggle('hidden', mode !== 'overnight');
+    $('historicalPanel').classList.toggle('hidden', mode !== 'historical');
+  }
+
+  function renderChannels(selected = [1, 2, 3, 4]) {
+    $('channels').innerHTML = channels.map((channel) => `
+      <label class="flex cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-slate-900/50 px-3 py-3 text-sm font-bold transition hover:border-indigo-400/50">
+        <input type="checkbox" name="separate" value="${channel}" ${selected.includes(channel) ? 'checked' : ''} class="h-4 w-4 accent-indigo-500">
+        <span>กล้อง ${String(channel).padStart(2, '0')}</span>
+      </label>`).join('');
+  }
+
+  async function refresh() {
+    try {
+      const data = await (await fetch('/api/status')).json();
+      channels = data.channels;
+      if (!$('channels').children.length) {
+        $('channelCount').textContent = channels.length;
+        renderChannels(data.schedule.separate_channels);
+      }
+      scheduleEnabled = data.schedule.enabled;
+      scheduleTimes = data.schedule.times;
+      $('scheduleTimes').textContent = scheduleTimes.join(' · ');
+      $('scheduleState').textContent = scheduleEnabled ? 'กำลังเปิดรันข้ามคืน' : 'ยังไม่เปิดใช้งาน';
+      $('scheduleState').className = 'mt-1 text-sm ' + (scheduleEnabled ? 'text-emerald-300' : 'text-slate-400');
+      $('toggleSchedule').textContent = scheduleEnabled ? 'หยุดรันข้ามคืน' : 'เปิดรันข้ามคืน';
+      $('toggleSchedule').className = 'rounded-xl px-5 py-3 text-sm font-bold shadow-lg transition ' + (scheduleEnabled ? 'bg-rose-500 hover:bg-rose-400 shadow-rose-500/20' : 'bg-emerald-500 hover:bg-emerald-400 shadow-emerald-500/20');
+      const job = data.job;
+      const partial = !job.running && job.error && /^เสร็จ/.test(job.message || '');
+      const stateText = job.running ? 'กำลังทำงาน' : (partial ? 'เสร็จบางส่วน' : (job.error ? 'มีข้อผิดพลาด' : 'พร้อมทำงาน'));
+      const stateColor = job.running ? 'text-cyan-300' : (partial ? 'text-amber-300' : (job.error ? 'text-rose-300' : 'text-emerald-300'));
+      $('jobState').textContent = stateText;
+      $('jobState').className = 'mt-2 text-2xl font-black ' + stateColor;
+      $('jobProgress').textContent = `${job.progress}%`;
+      $('progressBar').style.width = `${job.progress}%`;
+      $('cancelJob').disabled = !job.running;
+      const detail = job.error ? `\nคำเตือนรายกล้อง: ${JSON.stringify(job.error)}` : '';
+      $('statusText').textContent = job.message + detail;
+      $('statusPill').textContent = job.running ? 'RUNNING' : (partial ? 'PARTIAL' : (job.error ? 'ERROR' : 'READY'));
+      $('statusPill').className = 'rounded-full px-3 py-1 text-xs ' + (job.running ? 'bg-cyan-400/10 text-cyan-300' : (partial ? 'bg-amber-400/10 text-amber-300' : (job.error ? 'bg-rose-400/10 text-rose-300' : 'bg-emerald-400/10 text-emerald-300')));
+      $('outputText').textContent = job.last_output || '';
+      $('timezone').textContent = data.timezone;
+      refreshResults();
+    } catch (error) {
+      $('statusText').textContent = 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: ' + error;
+    }
+  }
+
+  async function post(path, payload) {
+    const response = await fetch(path, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || data.error || 'ทำรายการไม่สำเร็จ');
+    return data;
+  }
+
+  $('saveSchedule').onclick = async () => {
+    try {
+      await post('/api/schedule', { enabled: scheduleEnabled, times: [$('scheduleTime1').value, $('scheduleTime2').value], separate_channels: selectedChannels() });
+      await refresh();
+    } catch (error) { alert(error.message); }
+  };
+  $('toggleSchedule').onclick = async () => {
+    try {
+      await post('/api/schedule', { enabled: !scheduleEnabled, times: [$('scheduleTime1').value, $('scheduleTime2').value], separate_channels: selectedChannels() });
+      await refresh();
+    } catch (error) { alert(error.message); }
+  };
+  $('liveNow').onclick = async () => {
+    try { await post('/api/capture', { mode: 'live', separate_channels: selectedChannels() }); await refresh(); } catch (error) { alert(error.message); }
+  };
+  $('historicalButton').onclick = async () => {
+    try {
+      await post('/api/capture-night', {
+        date: $('nightDate').value,
+        window_1_start: $('window1Start').value,
+        window_1_end: $('window1End').value,
+        capture_time_1: $('capture1').value,
+        window_2_start: $('window2Start').value,
+        window_2_end: $('window2End').value,
+        capture_time_2: $('capture2').value,
+        duration_seconds: Number($('duration').value),
+        separate_channels: selectedChannels()
+      });
+      await refresh();
+    } catch (error) { alert(error.message); }
+  };
+  $('selectFirst').onclick = () => document.querySelectorAll('input[name="separate"]').forEach((el, index) => el.checked = index < 4);
+  $('selectAll').onclick = () => document.querySelectorAll('input[name="separate"]').forEach((el) => el.checked = true);
+  $('refreshResults').onclick = refreshResults;
+  $('cancelJob').onclick = async () => {
+    if (!confirm('ต้องการยกเลิกงานที่กำลังทำงานอยู่หรือไม่?')) return;
+    try { await post('/api/cancel', {}); await refresh(); } catch (error) { alert(error.message); }
+  };
+  document.querySelectorAll('.mode-button').forEach((button) => button.onclick = () => setMode(button.dataset.mode));
+
+  const now = new Date();
+  $('nightDate').value = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
+  setMode('overnight');
+  refresh();
+  setInterval(refresh, 1500);
+</script>
+</body>
+</html>
