@@ -83,6 +83,35 @@ except Exception:
     # Bangkok has no daylight-saving changes, so UTC+7 is a safe fallback.
     LOCAL_TZ = dt_timezone(timedelta(hours=7), "Asia/Bangkok")
 
+def resolve_ffmpeg(configured):
+    """Resolve ffmpeg even when Windows did not refresh PATH after winget."""
+    configured = (configured or "ffmpeg").strip().strip('"').strip("'")
+    direct = Path(configured).expanduser()
+    if direct.is_file():
+        return str(direct)
+    discovered = shutil.which(configured)
+    if discovered:
+        return discovered
+    if os.name != "nt":
+        return configured
+
+    candidates = [
+        Path(os.getenv("ProgramFiles", r"C:\Program Files")) / "ffmpeg" / "bin" / "ffmpeg.exe",
+        Path(os.getenv("ProgramData", r"C:\ProgramData")) / "chocolatey" / "bin" / "ffmpeg.exe",
+        Path(os.getenv("LOCALAPPDATA", "")) / "Scoop" / "shims" / "ffmpeg.exe",
+        Path(os.getenv("USERPROFILE", "")) / "scoop" / "shims" / "ffmpeg.exe",
+        Path(r"C:\ffmpeg\bin\ffmpeg.exe"),
+    ]
+    winget_packages = Path(os.getenv("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
+    if winget_packages.is_dir():
+        for package_dir in winget_packages.glob("Gyan.FFmpeg*"):
+            candidates.extend(package_dir.rglob("ffmpeg.exe"))
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return configured
+
+
 LIVE_HOST = os.getenv("CCTV_LIVE_HOST", "arit-camera.rbru.ac.th")
 LIVE_PORT = env_int("CCTV_LIVE_PORT", 554)
 LIVE_USERNAME = os.getenv("CCTV_USERNAME", "")
@@ -95,7 +124,7 @@ ISAPI_HOST = os.getenv("CCTV_ISAPI_HOST", LIVE_HOST)
 ISAPI_PORT = env_int("CCTV_ISAPI_PORT", 80)
 ISAPI_USERNAME = os.getenv("CCTV_ISAPI_USERNAME", LIVE_USERNAME)
 ISAPI_PASSWORD = os.getenv("CCTV_ISAPI_PASSWORD", LIVE_PASSWORD)
-FFMPEG = os.getenv("CCTV_FFMPEG", "ffmpeg")
+FFMPEG = resolve_ffmpeg(os.getenv("CCTV_FFMPEG", "ffmpeg"))
 MAX_WORKERS = max(1, env_int("CCTV_MAX_WORKERS", 6))
 CAPTURE_DURATION = max(1, env_int("CCTV_CAPTURE_DURATION_SECONDS", 60))
 FRAME_TIMEOUT_SECONDS = max(5, env_int("CCTV_FRAME_TIMEOUT_SECONDS", 20))
