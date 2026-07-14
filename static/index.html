@@ -265,6 +265,7 @@ winget install --id Gyan.FFmpeg --exact</pre>
   let channels = [];
   let scheduleEnabled = false;
   let scheduleTimes = ['23:00', '04:00'];
+  let scheduleFormDirty = false;
   const $ = (id) => document.getElementById(id);
 
   function formatResultLabel(batch) {
@@ -364,6 +365,12 @@ winget install --id Gyan.FFmpeg --exact</pre>
       }
       scheduleEnabled = data.schedule.enabled;
       scheduleTimes = data.schedule.times;
+      // Keep the form synchronized with the saved server values, but never
+      // overwrite a time the user is currently editing before it is saved.
+      if (!scheduleFormDirty) {
+        $('scheduleTime1').value = scheduleTimes[0] || '23:00';
+        $('scheduleTime2').value = scheduleTimes[1] || '04:00';
+      }
       $('scheduleTimes').textContent = scheduleTimes.join(' · ');
       $('scheduleState').textContent = scheduleEnabled ? 'กำลังเปิดรันข้ามคืน' : 'ยังไม่เปิดใช้งาน';
       $('scheduleState').className = 'mt-1 text-sm ' + (scheduleEnabled ? 'text-emerald-300' : 'text-slate-400');
@@ -401,12 +408,14 @@ winget install --id Gyan.FFmpeg --exact</pre>
   $('saveSchedule').onclick = async () => {
     try {
       await post('/api/schedule', { enabled: scheduleEnabled, times: [$('scheduleTime1').value, $('scheduleTime2').value] });
+      scheduleFormDirty = false;
       await refresh();
     } catch (error) { alert(error.message); }
   };
   $('toggleSchedule').onclick = async () => {
     try {
       await post('/api/schedule', { enabled: !scheduleEnabled, times: [$('scheduleTime1').value, $('scheduleTime2').value] });
+      scheduleFormDirty = false;
       await refresh();
     } catch (error) { alert(error.message); }
   };
@@ -470,6 +479,7 @@ winget install --id Gyan.FFmpeg --exact</pre>
     try { await post('/api/cancel', {}); await refresh(); } catch (error) { alert(error.message); }
   };
   document.querySelectorAll('.mode-button').forEach((button) => button.onclick = () => setMode(button.dataset.mode));
+  ['scheduleTime1', 'scheduleTime2'].forEach((id) => $(id).addEventListener('input', () => { scheduleFormDirty = true; }));
 
   const now = new Date();
   $('nightDate').value = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
