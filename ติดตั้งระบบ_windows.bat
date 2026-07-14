@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-echo CCTV Automation - ติดตั้งส่วนประกอบสำหรับ Windows
+echo CCTV Automation - ติดตั้งส่วนประกอบสำหรับ Windows Web base
 echo.
 
 where winget >nul 2>&1
@@ -21,6 +21,7 @@ winget install --id Gyan.FFmpeg --exact --source winget --accept-source-agreemen
 
 echo.
 echo ติดตั้งส่วนประกอบที่จำเป็นเสร็จแล้ว
+echo Web base พร้อมใช้งานแล้ว
+echo Electron เก็บไว้ใน developer\electron และยังไม่ใช้ในรุ่นนี้
 echo ปิดหน้าต่างนี้แล้วเปิดใหม่ก่อนใช้ เปิดโปรแกรม_windows.bat
-echo Node.js ไม่จำเป็นสำหรับโปรเจกต์เวอร์ชันปัจจุบัน
 pause

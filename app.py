@@ -16,6 +16,7 @@ import uuid
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone as dt_timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,6 +28,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 CAPTURES_DIR = ROOT / "captures"
+EXPORTS_DIR = ROOT / "exports"
 STATE_FILE = DATA_DIR / "state.json"
 STATIC_INDEX = ROOT / "static" / "index.html"
 STOP_EVENT = threading.Event()
@@ -144,6 +146,7 @@ SCHEDULE_TIMES = [
 def ensure_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 ensure_dirs()
@@ -462,9 +465,7 @@ def capture_batch(local_dt, historical, separate_channels, duration_seconds, job
     time_name = local_dt.strftime("%H-%M")
     batch_dir = CAPTURES_DIR / date_name / time_name
     overview_dir = batch_dir / "รวมกล้อง"
-    separate_dir = batch_dir / "รูปเดี่ยว"
     overview_dir.mkdir(parents=True, exist_ok=True)
-    separate_dir.mkdir(parents=True, exist_ok=True)
 
     frame_paths = {}
     failures = {}
@@ -498,15 +499,6 @@ def capture_batch(local_dt, historical, separate_channels, duration_seconds, job
     collage_path = overview_dir / ("ภาพรวม-%d-ช่อง_%s.jpg" % (len(successful_paths), local_dt.strftime("%Y-%m-%d_%H-%M-%S")))
     collage_ok = make_collage(successful_paths, collage_path)
 
-    copied_separate = []
-    for channel in valid_separate_channels(separate_channels):
-        source = frame_paths.get(channel)
-        if not source:
-            continue
-        target = separate_dir / source.name
-        shutil.copy2(source, target)
-        copied_separate.append(channel)
-
     manifest = {
         "job_id": job_id,
         "mode": "historical" if historical else "live",
@@ -515,7 +507,6 @@ def capture_batch(local_dt, historical, separate_channels, duration_seconds, job
         "overview_channels": CHANNELS,
         "successful_channels": sorted(frame_paths),
         "failed_channels": failures,
-        "separate_channels": copied_separate,
         "collage_created": collage_ok,
     }
     manifest_path = batch_dir / "manifest.json"
@@ -696,6 +687,71 @@ def capture_url(path):
     return "/captures/" + quote(relative, safe="/")
 
 
+def live_stream_command(channel):
+    return [
+        FFMPEG,
+        "-hide_banner",
+        "-loglevel", "error",
+        "-rtsp_transport", "tcp",
+        "-i", live_url(channel),
+        "-an",
+        "-vf", "fps=5",
+        "-q:v", "5",
+        "-f", "mpjpeg",
+        "-boundary_tag", "ffmpeg",
+        "-",
+    ]
+
+
+def export_url(path):
+    relative = path.resolve().relative_to(EXPORTS_DIR.resolve()).as_posix()
+    return "/exports/" + quote(relative, safe="/")
+
+
+def safe_export_path(request_path):
+    relative = unquote(request_path[len("/exports/"):])
+    base = EXPORTS_DIR.resolve()
+    candidate = (EXPORTS_DIR / relative).resolve()
+    try:
+        if os.path.commonpath([str(base), str(candidate)]) != str(base):
+            return None
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def job_manifests(job_id):
+    if not job_id or not re.fullmatch(r"[A-Za-z0-9_-]+", str(job_id)):
+        return []
+    matches = []
+    for manifest_path in CAPTURES_DIR.rglob("manifest.json"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if str(manifest.get("job_id", "")) == str(job_id):
+            matches.append((manifest_path, manifest))
+    return sorted(matches, key=lambda item: item[0].parent.as_posix())
+
+
+def export_job(job_id):
+    matches = job_manifests(job_id)
+    if not matches:
+        raise ValueError("ไม่พบผลลัพธ์ของงานนี้")
+    first_manifest = matches[0][0].parent
+    export_path = EXPORTS_DIR / ("รอบเวร_%s_%s.zip" % (first_manifest.parent.name, job_id))
+    with zipfile.ZipFile(export_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for manifest_path, _manifest in matches:
+            batch_dir = manifest_path.parent
+            folder = "%s_%s" % (batch_dir.parent.name, batch_dir.name)
+            archive.write(manifest_path, "%s/manifest.json" % folder)
+            subdir = batch_dir / "รวมกล้อง"
+            if subdir.is_dir():
+                for image_path in sorted(subdir.glob("*.jpg")):
+                    archive.write(image_path, "%s/รวมกล้อง/%s" % (folder, image_path.name))
+    return export_path, len(matches)
+
+
 def list_result_batches(limit=12):
     batches = []
     manifests = sorted(
@@ -710,20 +766,20 @@ def list_result_batches(limit=12):
             continue
         batch_dir = manifest_path.parent
         overview_dir = batch_dir / "รวมกล้อง"
-        separate_dir = batch_dir / "รูปเดี่ยว"
         overview_images = sorted(overview_dir.glob("camera-*.jpg"))
-        separate_images = sorted(separate_dir.glob("camera-*.jpg"))
         collages = sorted(overview_dir.glob("ภาพรวม-*.jpg"))
+        job_id = manifest.get("job_id")
+        existing_exports = sorted(EXPORTS_DIR.glob("*_%s.zip" % job_id)) if job_id else []
         batches.append({
-            "job_id": manifest.get("job_id"),
+            "job_id": job_id,
             "date": batch_dir.parent.name,
             "time": batch_dir.name,
             "mode": manifest.get("mode"),
             "local_datetime": manifest.get("local_datetime"),
             "successful_channels": manifest.get("successful_channels", []),
             "collage": capture_url(collages[0]) if collages else None,
+            "export_url": export_url(existing_exports[0]) if existing_exports else None,
             "overview": [{"name": path.name, "url": capture_url(path)} for path in overview_images],
-            "separate": [{"name": path.name, "url": capture_url(path)} for path in separate_images],
         })
     return batches
 
@@ -770,6 +826,50 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/results":
             self.send_json({"batches": list_result_batches()})
             return
+        if parsed.path == "/api/live-stream":
+            try:
+                channel = int(parse_qs(parsed.query).get("channel", [""])[0])
+            except (TypeError, ValueError):
+                self.send_json({"error": "ระบุหมายเลขกล้องไม่ถูกต้อง"}, 400)
+                return
+            if channel not in CHANNELS:
+                self.send_json({"error": "ไม่พบหมายเลขกล้องนี้"}, 404)
+                return
+            process = None
+            try:
+                process = subprocess.Popen(
+                    live_stream_command(channel),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=0,
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=ffmpeg")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                while True:
+                    chunk = process.stdout.read(8192)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+            except FileNotFoundError:
+                if not self.wfile.closed:
+                    self.send_json({"error": "ไม่พบ ffmpeg ตามค่า CCTV_FFMPEG"}, 500)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except OSError:
+                pass
+            finally:
+                if process and process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+            return
         if parsed.path.startswith("/captures/"):
             path = safe_capture_path(parsed.path)
             if not path:
@@ -779,6 +879,19 @@ class Handler(BaseHTTPRequestHandler):
             body = path.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if parsed.path.startswith("/exports/"):
+            path = safe_export_path(parsed.path)
+            if not path:
+                self.send_error(404)
+                return
+            body = path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", "attachment; filename*=UTF-8''%s" % quote(path.name))
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -819,6 +932,15 @@ class Handler(BaseHTTPRequestHandler):
                 selected = valid_separate_channels(payload.get("separate_channels", DEFAULT_SEPARATE))
                 started, detail = start_night_job([first_dt, second_dt], selected, duration)
                 self.send_json({"started": started, "detail": detail}, 202 if started else 409)
+                return
+            if parsed.path == "/api/export":
+                export_path, round_count = export_job(payload.get("job_id"))
+                self.send_json({
+                    "ok": True,
+                    "round_count": round_count,
+                    "url": export_url(export_path),
+                    "path": str(export_path),
+                })
                 return
             if parsed.path == "/api/cancel":
                 with JOB_LOCK:

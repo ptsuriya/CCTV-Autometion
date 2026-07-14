@@ -5,3 +5,5 @@ data/
 *.log
 __pycache__/
 .DS_Store
+developer/electron/node_modules/
+developer/electron/dist/

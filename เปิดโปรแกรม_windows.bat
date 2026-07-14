@@ -23,7 +23,6 @@ if not errorlevel 1 (
   exit /b 0
 )
 
-start "CCTV Automation Server" cmd /k "cd /d ""%~dp0"" && python app.py"
+start "CCTV Web base" cmd /k "cd /d ""%~dp0"" && python app.py"
 timeout /t 2 /nobreak >nul
 start "" http://127.0.0.1:8787/
-echo เปิดเว็บ CCTV Automation แล้ว
