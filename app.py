@@ -130,6 +130,10 @@ FFMPEG = resolve_ffmpeg(os.getenv("CCTV_FFMPEG", "ffmpeg"))
 MAX_WORKERS = max(1, env_int("CCTV_MAX_WORKERS", 6))
 CAPTURE_DURATION = max(1, env_int("CCTV_CAPTURE_DURATION_SECONDS", 60))
 FRAME_TIMEOUT_SECONDS = max(5, env_int("CCTV_FRAME_TIMEOUT_SECONDS", 20))
+PLAYBACK_SEARCH_TIME_MODE = os.getenv("CCTV_PLAYBACK_SEARCH_TIME", "local").strip().lower()
+if PLAYBACK_SEARCH_TIME_MODE not in {"local", "utc"}:
+    PLAYBACK_SEARCH_TIME_MODE = "local"
+PLAYBACK_SEARCH_PADDING_SECONDS = max(0, env_int("CCTV_PLAYBACK_SEARCH_PADDING_SECONDS", 120))
 OVERVIEW_COLUMNS = max(1, env_int("CCTV_OVERVIEW_COLUMNS", 6))
 CHANNELS = parse_channels(
     os.getenv("CCTV_CHANNELS", ""),
@@ -254,6 +258,13 @@ def playback_stamp(local_dt):
     return local_dt.strftime("%Y%m%dT%H%M%SZ")
 
 
+def playback_search_stamp(local_dt):
+    """Format ContentMgmt search time without confusing Thai local time with UTC."""
+    if PLAYBACK_SEARCH_TIME_MODE == "utc":
+        return local_dt.astimezone(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return local_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def playback_url(channel, local_dt, duration_seconds):
     start = utc_stamp(local_dt)
     end = utc_stamp(local_dt + timedelta(seconds=duration_seconds))
@@ -300,8 +311,13 @@ def xml_texts(root, name):
 
 
 def search_recording(channel, local_dt, duration_seconds):
-    start_utc = local_dt.astimezone(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    end_utc = (local_dt + timedelta(seconds=duration_seconds)).astimezone(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # The NVR in this project is configured for Asia/Bangkok. Search a small
+    # window around the requested minute because recordings are often split
+    # into segments and may start a few seconds before the requested time.
+    search_start = local_dt - timedelta(seconds=PLAYBACK_SEARCH_PADDING_SECONDS)
+    search_end = local_dt + timedelta(seconds=duration_seconds + PLAYBACK_SEARCH_PADDING_SECONDS)
+    search_start_text = playback_search_stamp(search_start)
+    search_end_text = playback_search_stamp(search_end)
     search_id = str(uuid.uuid4()).upper()
     xml_templates = [
         "<trackIDList><trackID>{track}</trackID></trackIDList>",
@@ -316,7 +332,7 @@ def search_recording(channel, local_dt, duration_seconds):
   <timeSpanList><timeSpan><startTime>{start}</startTime><endTime>{end}</endTime></timeSpan></timeSpanList>
   <contentTypeList><contentType>video</contentType></contentTypeList>
   <maxResults>20</maxResults><searchResultPosition>0</searchResultPosition>
-</CMSearchDescription>""".format(search_id=search_id, track_xml=track_xml.format(track=track_id(channel)), start=start_utc, end=end_utc)
+        </CMSearchDescription>""".format(search_id=search_id, track_xml=track_xml.format(track=track_id(channel)), start=search_start_text, end=search_end_text)
         try:
             response = isapi_request("/ISAPI/ContentMgmt/search", method="POST", body=body, timeout=10)
             root = ET.fromstring(response)
@@ -324,7 +340,10 @@ def search_recording(channel, local_dt, duration_seconds):
             if playback_values:
                 return playback_values[0]
             status = xml_texts(root, "responseStatusStrg") or xml_texts(root, "statusString")
-            last_error = status[0] if status else "ไม่พบไฟล์บันทึกในช่วงเวลานี้"
+            last_error = (
+                "ไม่พบไฟล์บันทึกใน NVR (กล้อง %s, %s ถึง %s; สถานะ %s)"
+                % (channel, search_start_text, search_end_text, status[0] if status else "NO MATCHES")
+            )
         except (urllib.error.HTTPError, urllib.error.URLError, ET.ParseError, OSError) as exc:
             last_error = str(exc)
     return None, last_error
@@ -519,8 +538,13 @@ def capture_batch(local_dt, historical, separate_channels, duration_seconds, job
 def run_job(job_id, local_dt, historical, separate_channels, duration_seconds):
     try:
         manifest_path, failures = capture_batch(local_dt, historical, separate_channels, duration_seconds, job_id)
-        message = "เสร็จแล้ว %d/%d ช่อง" % (len(CHANNELS) - len(failures), len(CHANNELS))
-        set_job(running=False, progress=100, message=message, error=None if not failures else failures, last_output=str(manifest_path))
+        no_data = historical and len(failures) == len(CHANNELS)
+        message = (
+            "ไม่มีข้อมูลกล้องวงจรปิดในวันที่เลือก (%s)" % local_dt.strftime("%Y-%m-%d")
+            if no_data
+            else "เสร็จแล้ว %d/%d ช่อง" % (len(CHANNELS) - len(failures), len(CHANNELS))
+        )
+        set_job(running=False, progress=100, message=message, error=None if not failures or no_data else failures, last_output=str(manifest_path))
     except JobCancelled:
         set_job(running=False, progress=0, message="ยกเลิกแล้ว", error=None, last_output=None)
     except Exception as exc:
@@ -550,11 +574,19 @@ def run_night_job(job_id, capture_times, separate_channels, duration_seconds):
             manifests.append(str(manifest_path))
             if batch_failures:
                 failures[local_dt.strftime("%Y-%m-%d %H:%M")] = batch_failures
+        no_data = len(failures) == len(capture_times) and all(
+            len(batch_failures) == len(CHANNELS) for batch_failures in failures.values()
+        )
+        selected_dates = " และ ".join(local_dt.strftime("%Y-%m-%d") for local_dt in capture_times)
         set_job(
             running=False,
             progress=100,
-            message="เสร็จย้อนหลัง 2 ช่วงเวลา",
-            error=None if not failures else failures,
+            message=(
+                "ไม่มีข้อมูลกล้องวงจรปิดในวันที่เลือก (%s)" % selected_dates
+                if no_data
+                else "เสร็จย้อนหลัง 2 ช่วงเวลา"
+            ),
+            error=None if not failures or no_data else failures,
             last_output=", ".join(manifests),
         )
     except JobCancelled:
@@ -703,6 +735,23 @@ def live_stream_command(channel):
     ]
 
 
+def playback_stream_command(channel, local_dt, duration_seconds):
+    return [
+        FFMPEG,
+        "-hide_banner",
+        "-loglevel", "error",
+        "-rtsp_transport", "tcp",
+        "-i", historical_recording_url(channel, local_dt, duration_seconds),
+        "-an",
+        "-t", str(duration_seconds),
+        "-vf", "fps=5",
+        "-q:v", "5",
+        "-f", "mpjpeg",
+        "-boundary_tag", "ffmpeg",
+        "-",
+    ]
+
+
 def export_url(path):
     relative = path.resolve().relative_to(EXPORTS_DIR.resolve()).as_posix()
     return "/exports/" + quote(relative, safe="/")
@@ -810,6 +859,15 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if parsed.path in {"/guide.html", "/guide"}:
+            guide_path = ROOT / "static" / "guide.html"
+            body = guide_path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if parsed.path == "/api/status":
             with JOB_LOCK:
                 job = dict(JOB)
@@ -860,6 +918,54 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass
             except OSError:
+                pass
+            finally:
+                if process and process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+            return
+        if parsed.path == "/api/playback-stream":
+            query = parse_qs(parsed.query)
+            try:
+                channel = int(query.get("channel", [""])[0])
+                local_dt = valid_datetime(query.get("date", [""])[0], query.get("time", [""])[0])
+                duration = max(1, min(300, int(query.get("duration", ["60"])[0])))
+            except (TypeError, ValueError):
+                self.send_json({"error": "ระบุวัน เวลา หรือหมายเลขกล้องไม่ถูกต้อง"}, 400)
+                return
+            if channel not in CHANNELS:
+                self.send_json({"error": "ไม่พบหมายเลขกล้องนี้"}, 404)
+                return
+            process = None
+            try:
+                process = subprocess.Popen(
+                    playback_stream_command(channel, local_dt, duration),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=0,
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=ffmpeg")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                while True:
+                    chunk = process.stdout.read(8192)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+            except RuntimeError as exc:
+                if process:
+                    process.kill()
+                self.send_json({"error": str(exc)}, 404)
+            except FileNotFoundError:
+                self.send_json({"error": "ไม่พบ ffmpeg ตามค่า CCTV_FFMPEG"}, 500)
+            except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             finally:
                 if process and process.poll() is None:
