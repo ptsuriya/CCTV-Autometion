@@ -420,6 +420,15 @@ function App() {
               <Info size={16} />
               คู่มือ
             </a>
+            <a
+              href="https://arit-cctv.rbru.ac.th/"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-cyan-300/20 bg-cyan-400/10 px-4 text-sm font-black text-cyan-100 transition hover:border-cyan-300/40 hover:bg-cyan-400/20"
+            >
+              ส่งงาน
+              <ArrowUpRight size={16} />
+            </a>
             <span className="hidden items-center gap-2 rounded-xl border border-emerald-300/15 bg-emerald-400/10 px-4 py-2.5 text-xs font-bold text-emerald-200 sm:inline-flex">
               <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-300" />
               LOCAL WEB BASE
@@ -429,34 +438,49 @@ function App() {
 
         {mode === "overnight" && (
           <section className="pb-8 pt-10 lg:pt-16">
-            <div>
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-indigo-300/20 bg-indigo-400/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[.2em] text-indigo-200">
-                <Sparkles size={14} />
-                night operations console
+            <div className="grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_300px]">
+              <div>
+                <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-indigo-300/20 bg-indigo-400/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[.2em] text-indigo-200">
+                  <Sparkles size={14} />
+                  night operations console
+                </div>
+                <BlurText
+                  text="จัดการภาพกล้องวงจรปิด"
+                  className="max-w-3xl text-4xl font-black leading-[1.1] tracking-tight text-white sm:text-6xl"
+                />
+                <p className="mt-5 max-w-2xl text-base leading-7 text-slate-400 sm:text-lg">
+                  เก็บภาพตามเวลา ดูสดจาก NVR และจัดชุดภาพพร้อมส่งงาน
+                  ในหน้าเดียวที่ออกแบบให้มองสถานะได้ทันที
+                </p>
+                <div className="mt-7 flex flex-wrap gap-3">
+                  <button
+                    onClick={() => setMode("overnight")}
+                    className="inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-2xl bg-accent px-5 text-sm font-black text-white shadow-[0_14px_32px_rgba(124,58,237,.25)] transition hover:-translate-y-0.5 hover:bg-violet-500"
+                  >
+                    <TimerReset size={18} />
+                    ตั้งเวลารัน
+                  </button>
+                  <button
+                    onClick={() => setMode("live")}
+                    className="inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.06] px-5 text-sm font-black text-slate-200 transition hover:border-cyan-300/30 hover:bg-white/[0.1]"
+                  >
+                    <MonitorPlay size={18} />
+                    เปิดภาพสด
+                  </button>
+                </div>
               </div>
-              <BlurText
-                text="จัดการภาพกล้องวงจรปิด"
-                className="max-w-3xl text-4xl font-black leading-[1.1] tracking-tight text-white sm:text-6xl"
-              />
-              <p className="mt-5 max-w-2xl text-base leading-7 text-slate-400 sm:text-lg">
-                เก็บภาพตามเวลา ดูสดจาก NVR และจัดชุดภาพพร้อมส่งงาน
-                ในหน้าเดียวที่ออกแบบให้มองสถานะได้ทันที
-              </p>
-              <div className="mt-7 flex flex-wrap gap-3">
-                <button
-                  onClick={() => setMode("overnight")}
-                  className="inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-2xl bg-accent px-5 text-sm font-black text-white shadow-[0_14px_32px_rgba(124,58,237,.25)] transition hover:-translate-y-0.5 hover:bg-violet-500"
-                >
-                  <TimerReset size={18} />
-                  ตั้งเวลารัน
-                </button>
-                <button
-                  onClick={() => setMode("live")}
-                  className="inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.06] px-5 text-sm font-black text-slate-200 transition hover:border-cyan-300/30 hover:bg-white/[0.1]"
-                >
-                  <MonitorPlay size={18} />
-                  เปิดภาพสด
-                </button>
+              <div className="relative mx-auto w-full max-w-[270px] lg:mr-2 lg:max-w-[300px]">
+                <div className="absolute inset-4 rounded-full bg-indigo-500/20 blur-3xl" />
+                <div className="relative overflow-hidden rounded-[32px] border border-indigo-200/20 bg-[#10152b]/70 p-4 shadow-[0_20px_70px_rgba(79,70,229,.24)] backdrop-blur-xl">
+                  <img
+                    src="/night-night-cctv.png"
+                    alt="Night Night CCTV logo"
+                    className="aspect-square w-full rounded-[24px] object-cover"
+                  />
+                  <div className="mt-3 text-center text-[10px] font-bold uppercase tracking-[.22em] text-indigo-200/60">
+                    Night operations console
+                  </div>
+                </div>
               </div>
             </div>
           </section>
@@ -1163,7 +1187,8 @@ function ResultsSection({ results, onExport, onDelete, action, onRefresh }) {
                   {group.rounds.some((batch) => batch.export_url) ? (
                     <a
                       href={
-                        group.rounds.find((batch) => batch.export_url).export_url
+                        group.rounds.find((batch) => batch.export_url)
+                          .export_url
                       }
                       className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 text-xs font-black text-slate-950"
                     >
