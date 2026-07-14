@@ -684,6 +684,7 @@ def list_result_batches(limit=12):
         separate_images = sorted(separate_dir.glob("camera-*.jpg"))
         collages = sorted(overview_dir.glob("ภาพรวม-*.jpg"))
         batches.append({
+            "job_id": manifest.get("job_id"),
             "date": batch_dir.parent.name,
             "time": batch_dir.name,
             "mode": manifest.get("mode"),

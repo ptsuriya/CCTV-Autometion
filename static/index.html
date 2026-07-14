@@ -241,6 +241,22 @@ winget install --id Gyan.FFmpeg --exact</pre>
     return `รอบเวรที่ ${Number(day)} ${thaiMonths[Number(month) - 1]} ${Number(year) + 543} เวลา ${time}`;
   }
 
+  function groupResultBatches(batches) {
+    const groups = [];
+    const byJob = new Map();
+    batches.forEach((batch) => {
+      const key = batch.job_id || `${batch.date}-${batch.time}`;
+      if (!byJob.has(key)) {
+        const group = { job_id: key, mode: batch.mode, rounds: [] };
+        byJob.set(key, group);
+        groups.push(group);
+      }
+      byJob.get(key).rounds.push(batch);
+    });
+    groups.forEach((group) => group.rounds.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)));
+    return groups;
+  }
+
   function imageTile(image, label) {
     return `<a href="${image.url}" target="_blank" download class="group block overflow-hidden rounded-xl border border-white/10 bg-slate-900/70"><img src="${image.url}" alt="${image.name}" loading="lazy" class="aspect-video w-full object-cover transition duration-300 group-hover:scale-105"><div class="truncate px-2 py-2 text-xs text-slate-400">${label || image.name}</div></a>`;
   }
@@ -250,18 +266,20 @@ winget install --id Gyan.FFmpeg --exact</pre>
       $('results').innerHTML = '<div class="rounded-2xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-500">ยังไม่มีผลลัพธ์ภาพ</div>';
       return;
     }
-    $('results').innerHTML = batches.map((batch) => `
+    const groups = groupResultBatches(batches);
+    $('results').innerHTML = groups.map((group) => `
       <article class="overflow-hidden rounded-2xl border border-white/10 bg-slate-950/60">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-          <div><div class="font-black text-white">${formatResultLabel(batch)}</div><div class="text-xs text-slate-500">${batch.mode === 'historical' ? 'ย้อนหลัง' : 'ภาพสด'} · สำเร็จ ${batch.successful_channels.length} ช่อง</div></div>
-          ${batch.collage ? `<a href="${batch.collage}" target="_blank" download class="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-400">ดาวน์โหลดภาพรวม</a>` : ''}
+          <div><div class="font-black text-white">${group.rounds.length > 1 ? 'รอบเวรเดียวกัน' : 'ผลลัพธ์ภาพ'}</div><div class="mt-1 text-sm text-slate-300">${group.rounds.map(formatResultLabel).join(' <span class="text-slate-600">และ</span> ')}</div><div class="mt-1 text-xs text-slate-500">${group.mode === 'historical' ? 'ย้อนหลัง' : 'ภาพสด'} · ${group.rounds.length} รอบภาพ</div></div>
         </div>
-        ${batch.collage ? `<div class="border-b border-white/10 bg-black/20 p-3"><a href="${batch.collage}" target="_blank"><img src="${batch.collage}" loading="lazy" class="w-full rounded-xl" alt="ภาพรวม ${batch.date} ${batch.time}"></a></div>` : ''}
-        <div class="p-4">
-          <div class="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">รูปเดี่ยวที่เลือก</div>
-          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">${batch.separate.length ? batch.separate.map((image) => imageTile(image)).join('') : '<div class="col-span-full text-sm text-slate-500">ไม่มีรูปเดี่ยว</div>'}</div>
-          <details class="mt-4"><summary class="cursor-pointer text-xs font-bold text-slate-400">ดูภาพกล้องทั้งหมด ${batch.overview.length} ช่อง</summary><div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">${batch.overview.map((image) => imageTile(image)).join('')}</div></details>
-        </div>
+        ${group.rounds.map((batch) => `
+          <div class="border-b border-white/10 p-4 last:border-b-0">
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2"><div class="font-bold text-cyan-200">${formatResultLabel(batch)}</div>${batch.collage ? `<a href="${batch.collage}" target="_blank" download class="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-400">ดาวน์โหลดภาพรวม</a>` : ''}</div>
+            ${batch.collage ? `<a href="${batch.collage}" target="_blank"><img src="${batch.collage}" loading="lazy" class="w-full rounded-xl" alt="ภาพรวม ${batch.date} ${batch.time}"></a>` : '<div class="rounded-xl border border-dashed border-white/10 p-6 text-center text-sm text-slate-500">ไม่มีภาพรวม</div>'}
+            <div class="mt-4 mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">รูปเดี่ยวที่เลือก</div>
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">${batch.separate.length ? batch.separate.map((image) => imageTile(image)).join('') : '<div class="col-span-full text-sm text-slate-500">ไม่มีรูปเดี่ยว</div>'}</div>
+            <details class="mt-4"><summary class="cursor-pointer text-xs font-bold text-slate-400">ดูภาพกล้องทั้งหมด ${batch.overview.length} ช่อง</summary><div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">${batch.overview.map((image) => imageTile(image)).join('')}</div></details>
+          </div>`).join('')}
       </article>`).join('');
   }
 
