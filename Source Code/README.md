@@ -8,7 +8,7 @@
 /Volumes/DriveG/dev/workspace/github/CCTV Autometion
 ```
 
-คู่มือฉบับเต็ม: [คู่มือการใช้งาน.md](คู่มือการใช้งาน.md)
+คู่มือฉบับเต็ม: [คู่มือการใช้งาน.md](../คู่มือการใช้งาน.md)
 
 ## ความสามารถ
 
@@ -28,8 +28,8 @@
 ไฟล์ `.env` มีอยู่ในเครื่องแล้ว และถูกใส่ใน `.gitignore` ให้เรียบร้อย หากต้องตั้งเครื่องใหม่:
 
 ```bash
-cp .env.example .env
-chmod 600 .env
+cp .env.example ../.env
+chmod 600 ../.env
 ```
 
 แก้ค่าใน `.env` โดยเฉพาะ:
@@ -53,7 +53,7 @@ chmod 600 .env
 
 หน้าเว็บใช้งานด้วย React + Tailwind โดย build เป็นไฟล์ static แล้วให้ Python เสิร์ฟ
 Node.js ใช้ตอนติดตั้ง/พัฒนา/build หน้าเว็บเท่านั้น ไม่ต้องเปิด Node ค้างตอนใช้งานจริง
-Electron ยังเก็บไว้ใน `developer/electron/` และยังไม่ใช้ในรุ่นนี้
+ถ้าต้องการเปิดเป็นแอป Desktop ให้ดู [คู่มือ Electron](developer/electron/README.md) โดย Electron จะเปิด Python backend ให้เอง
 
 ติดตั้งทั้งหมดด้วย Homebrew บน macOS:
 
@@ -92,7 +92,15 @@ python3 app.py
 http://127.0.0.1:8787
 ```
 
-Web base เป็นโหมดใช้งานหลักของโปรเจกต์ ให้ดับเบิลคลิก `เปิดโปรแกรม.command`
+Web base เป็นโหมดใช้งานหลักของโปรเจกต์ ให้ดับเบิลคลิก `../เปิด Web Base macOS.command` หรือเลือกใช้แอป Desktop ที่ build แล้ว
+
+เมื่อสร้าง Desktop app แล้ว ไฟล์ที่เปิดใช้และไฟล์ติดตั้งจะอยู่ที่โฟลเดอร์หลักของโปรเจกต์:
+
+```text
+CCTV Automation.app                    # ดับเบิลคลิกเปิดบน macOS
+ติดตั้ง CCTV Automation macOS.dmg      # ไฟล์ติดตั้ง macOS
+ติดตั้ง CCTV Automation Windows.exe    # ไฟล์ติดตั้ง Windows x64
+```
 
 ## วิธีใช้งาน Web base:
 
@@ -131,7 +139,11 @@ frontend/
 
 ภาพย้อนหลังต้องให้ NVR รองรับ RTSP Playback และเครื่องนี้ต้องเข้าถึง NVR ได้ หากกดบันทึกย้อนหลังแล้วไม่สำเร็จ ให้ดูข้อความในหน้าเว็บและ `data/app.log` โปรแกรมจะค้นหา ffmpeg ในตำแหน่งติดตั้งมาตรฐานของ Windows ให้อัตโนมัติด้วย
 
-โค้ด Electron ถูกเก็บไว้ใน `developer/electron/` สำหรับนักพัฒนาเท่านั้น และยังไม่ใช้ในรุ่นนี้
+## แอป Desktop (Electron)
+
+Electron เปิดหน้าเดิมในหน้าต่างแอปและสตาร์ต Python backend ให้โดยอัตโนมัติ แต่ยังต้องติดตั้ง **Python 3** และ **FFmpeg** ในเครื่อง เนื่องจากเป็นตัวเชื่อมกล้องและ NVR
+
+ใช้คำสั่งและตำแหน่งไฟล์ `.env` ตาม [developer/electron/README.md](developer/electron/README.md) สำหรับ macOS และ Windows
 
 ## คู่มือในเว็บ
 

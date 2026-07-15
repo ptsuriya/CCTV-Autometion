@@ -28,9 +28,10 @@ from zoneinfo import ZoneInfo
 
 
 ROOT = Path(__file__).resolve().parent
+DELIVERY_ROOT = ROOT.parent if (ROOT.parent / ".env").is_file() else ROOT
 DATA_DIR = ROOT / "data"
-CAPTURES_DIR = ROOT / "captures"
-EXPORTS_DIR = ROOT / "exports"
+CAPTURES_DIR = DELIVERY_ROOT / "Picture" if DELIVERY_ROOT != ROOT else ROOT / "captures"
+EXPORTS_DIR = CAPTURES_DIR / "exports" if DELIVERY_ROOT != ROOT else ROOT / "exports"
 STATE_FILE = DATA_DIR / "state.json"
 STATIC_INDEX = ROOT / "static" / "index.html"
 STOP_EVENT = threading.Event()
@@ -58,6 +59,8 @@ def load_dotenv(path):
 
 
 load_dotenv(ROOT / ".env")
+if DELIVERY_ROOT != ROOT:
+    load_dotenv(DELIVERY_ROOT / ".env")
 
 
 def env_int(name, default):

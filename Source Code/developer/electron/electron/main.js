@@ -6,9 +6,12 @@ const http = require("http");
 const path = require("path");
 const { spawn } = require("child_process");
 
+app.setName("CCTV Automation");
+
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.CCTV_WEB_PORT || 8787);
-const URL = `http://${HOST}:${PORT}/`;
+const LOCAL_ORIGIN = `http://${HOST}:${PORT}`;
+const APP_URL = `${LOCAL_ORIGIN}/`;
 let backendProcess = null;
 let mainWindow = null;
 
@@ -17,13 +20,24 @@ function projectRoot() {
   const root = path.join(app.getPath("userData"), "backend");
   const resourceRoot = path.join(process.resourcesPath, "backend");
   fs.mkdirSync(root, { recursive: true });
-  if (!fs.existsSync(path.join(root, "app.py"))) {
-    fs.cpSync(resourceRoot, root, { recursive: true });
-  }
-  if (!fs.existsSync(path.join(root, ".env.example")) && fs.existsSync(path.join(resourceRoot, ".env.example"))) {
-    fs.copyFileSync(path.join(resourceRoot, ".env.example"), path.join(root, ".env.example"));
-  }
+  // Update bundled program files on every app update. The packaged resources do
+  // not contain .env, captures, exports, or data, so local operational data is kept.
+  fs.cpSync(resourceRoot, root, { recursive: true, force: true });
   return root;
+}
+
+function applicationIcon(root) {
+  const candidates = [
+    path.join(root, "frontend", "public", "night-night-cctv.png"),
+    path.join(root, "static", "night-night-cctv.png"),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+function environmentFile(root) {
+  const packaged = path.join(root, ".env");
+  if (app.isPackaged || fs.existsSync(packaged)) return packaged;
+  return path.join(root, "..", ".env");
 }
 
 function requestStatus() {
@@ -62,19 +76,38 @@ function startBackend(root) {
   const candidates = pythonCandidates();
   const launch = (index) => {
     const candidate = candidates[index];
-    backendProcess = spawn(candidate.command, [...candidate.args, "app.py"], {
+    const child = spawn(candidate.command, [...candidate.args, "app.py"], {
       cwd: root,
       env,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    backendProcess.stdout.on("data", (data) => process.stdout.write(`[cctv] ${data}`));
-    backendProcess.stderr.on("data", (data) => process.stderr.write(`[cctv] ${data}`));
-    backendProcess.once("error", () => {
+    backendProcess = child;
+    child.stdout.on("data", (data) => process.stdout.write(`[cctv] ${data}`));
+    child.stderr.on("data", (data) => process.stderr.write(`[cctv] ${data}`));
+    child.once("error", () => {
+      if (backendProcess === child) backendProcess = null;
       if (index + 1 < candidates.length) launch(index + 1);
+    });
+    child.once("exit", () => {
+      if (backendProcess === child) backendProcess = null;
     });
   };
   launch(0);
+}
+
+function stopBackend() {
+  if (!backendProcess || backendProcess.killed) return;
+  const child = backendProcess;
+  backendProcess = null;
+  if (process.platform === "win32" && child.pid) {
+    spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    return;
+  }
+  child.kill("SIGTERM");
 }
 
 async function waitForBackend() {
@@ -87,12 +120,13 @@ async function waitForBackend() {
 
 async function createWindow() {
   const root = projectRoot();
-  if (!fs.existsSync(path.join(root, ".env"))) {
+  const envFile = environmentFile(root);
+  if (!fs.existsSync(envFile)) {
     await dialog.showMessageBox({
       type: "warning",
       title: "ยังไม่พบไฟล์ .env",
       message: "ต้องวางไฟล์ .env ก่อนเริ่มใช้งาน",
-      detail: `ขอไฟล์ .env จากพี่หมี แล้ววางไว้ที่:\n${root}`,
+      detail: `ขอไฟล์ .env จากพี่หมี แล้ววางไว้ที่:\n${envFile}`,
     });
     app.quit();
     return;
@@ -103,7 +137,7 @@ async function createWindow() {
       type: "error",
       title: "เปิด CCTV Automation ไม่สำเร็จ",
       message: "เชื่อมต่อ Python backend ไม่ได้",
-      detail: `ตรวจสอบ Python, FFmpeg และไฟล์ .env ในโฟลเดอร์:\n${root}`,
+      detail: `ตรวจสอบ Python, FFmpeg และไฟล์ .env ที่:\n${envFile}`,
     });
     app.quit();
     return;
@@ -115,6 +149,7 @@ async function createWindow() {
     minWidth: 1100,
     minHeight: 720,
     title: "CCTV Automation",
+    icon: applicationIcon(root),
     backgroundColor: "#020617",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -123,7 +158,11 @@ async function createWindow() {
       sandbox: true,
     },
   });
-  mainWindow.loadURL(URL);
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event, targetUrl) => {
+    if (!targetUrl.startsWith(LOCAL_ORIGIN)) event.preventDefault();
+  });
+  await mainWindow.loadURL(APP_URL);
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -136,8 +175,5 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  if (backendProcess && !backendProcess.killed) {
-    backendProcess.kill();
-    backendProcess = null;
-  }
+  stopBackend();
 });

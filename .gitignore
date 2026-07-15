@@ -1,10 +1,15 @@
 .env
 config.json
-captures/
-data/
+Picture/
+Source Code/data/
 *.log
-__pycache__/
+Source Code/__pycache__/
 .DS_Store
-developer/electron/node_modules/
-developer/electron/dist/
-frontend/node_modules/
+Source Code/developer/electron/node_modules/
+Source Code/developer/electron/dist/
+/CCTV Automation.app/
+/CCTV Automation Windows/
+/ติดตั้ง CCTV Automation macOS.dmg
+/ติดตั้ง CCTV Automation Windows.exe
+/ติดตั้ง CCTV Automation Windows.exe.blockmap
+Source Code/frontend/node_modules/

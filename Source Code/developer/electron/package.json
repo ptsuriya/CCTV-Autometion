@@ -1,0 +1,55 @@
+{
+  "name": "cctv-automation",
+  "version": "1.0.0",
+  "description": "Local CCTV capture desktop application",
+  "author": "CCTV Automation",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "desktop": "electron .",
+    "check": "node --check electron/main.js && node --check electron/preload.js",
+    "dist:mac": "electron-builder --mac dmg --publish never && node scripts/copy-artifact.js mac",
+    "dist:win": "electron-builder --win nsis --x64 --publish never && node scripts/copy-artifact.js win"
+  },
+  "devDependencies": {
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "th.ac.rbru.cctvautomation",
+    "productName": "CCTV Automation",
+    "asar": true,
+    "artifactName": "CCTV-Automation-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "../../app.py", "to": "backend/app.py" },
+      { "from": "../../static", "to": "backend/static" },
+      { "from": "../../.env.example", "to": "backend/.env.example" },
+      { "from": "../../README.md", "to": "backend/README.md" },
+      { "from": "../../../คู่มือการใช้งาน.md", "to": "backend/คู่มือการใช้งาน.md" }
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "assets/night-night-cctv.icns",
+      "target": ["dmg"]
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "assets/night-night-cctv.ico",
+      "artifactName": "CCTV-Automation-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

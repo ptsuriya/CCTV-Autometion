@@ -1,10 +1,11 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+set "PROJECT_ROOT=%~dp0"
+set "SOURCE_ROOT=%PROJECT_ROOT%Source Code"
 
-if not exist ".env" (
+if not exist "%PROJECT_ROOT%.env" (
   echo ยังไม่พบไฟล์ .env
-  echo ให้ขอไฟล์ .env จากพี่หมี แล้ววางไว้ในโฟลเดอร์เดียวกับ app.py
+  echo ให้ขอไฟล์ .env จากพี่หมี แล้ววางไว้ที่โฟลเดอร์หลักของโปรเจกต์
   pause
   exit /b 1
 )
@@ -23,6 +24,6 @@ if not errorlevel 1 (
   exit /b 0
 )
 
-start "CCTV Web base" cmd /k "cd /d ""%~dp0"" && python app.py"
+start "CCTV Web base" cmd /k "cd /d ""%SOURCE_ROOT%"" && python app.py"
 timeout /t 2 /nobreak >nul
 start "" http://127.0.0.1:8787/
