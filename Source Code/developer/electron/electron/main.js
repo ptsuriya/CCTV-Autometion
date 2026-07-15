@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow } = require("electron");
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
@@ -35,9 +35,43 @@ function applicationIcon(root) {
 }
 
 function environmentFile(root) {
-  const packaged = path.join(root, ".env");
-  if (app.isPackaged || fs.existsSync(packaged)) return packaged;
-  return path.join(root, "..", ".env");
+  const localProjectRoot = process.platform === "darwin"
+    ? path.resolve(path.dirname(process.execPath), "../../..")
+    : path.resolve(path.dirname(process.execPath), "..");
+  const candidates = app.isPackaged
+    ? [
+      path.join(localProjectRoot, ".env"),
+      path.join(root, ".env"),
+    ]
+    : [
+      path.join(root, ".env"),
+      path.join(root, "..", ".env"),
+    ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
+}
+
+async function showSetupWindow({ root, title, heading, detail, envFile }) {
+  mainWindow = new BrowserWindow({
+    width: 720,
+    height: 530,
+    minWidth: 620,
+    minHeight: 480,
+    title,
+    icon: applicationIcon(root),
+    backgroundColor: "#020617",
+    autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  await mainWindow.loadFile(path.join(__dirname, "setup.html"), {
+    query: { title, heading, detail, envFile },
+  });
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
 }
 
 function requestStatus() {
@@ -122,24 +156,24 @@ async function createWindow() {
   const root = projectRoot();
   const envFile = environmentFile(root);
   if (!fs.existsSync(envFile)) {
-    await dialog.showMessageBox({
-      type: "warning",
+    await showSetupWindow({
+      root,
       title: "ยังไม่พบไฟล์ .env",
-      message: "ต้องวางไฟล์ .env ก่อนเริ่มใช้งาน",
-      detail: `ขอไฟล์ .env จากพี่หมี แล้ววางไว้ที่:\n${envFile}`,
+      heading: "ต้องวางไฟล์ .env ก่อนเริ่มใช้งาน",
+      detail: "ขอไฟล์ .env จากพี่หมี แล้ววางไว้ตามตำแหน่งด้านล่าง",
+      envFile,
     });
-    app.quit();
     return;
   }
   if (!(await requestStatus())) startBackend(root);
   if (!(await waitForBackend())) {
-    await dialog.showMessageBox({
-      type: "error",
+    await showSetupWindow({
+      root,
       title: "เปิด CCTV Automation ไม่สำเร็จ",
-      message: "เชื่อมต่อ Python backend ไม่ได้",
-      detail: `ตรวจสอบ Python, FFmpeg และไฟล์ .env ที่:\n${envFile}`,
+      heading: "เชื่อมต่อ Python backend ไม่ได้",
+      detail: "ตรวจสอบว่า Python 3, FFmpeg และไฟล์ .env พร้อมใช้งาน แล้วเปิดแอปใหม่",
+      envFile,
     });
-    app.quit();
     return;
   }
 
@@ -172,6 +206,10 @@ app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
 app.on("before-quit", () => {

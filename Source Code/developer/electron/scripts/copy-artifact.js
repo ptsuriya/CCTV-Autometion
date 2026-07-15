@@ -11,7 +11,14 @@ const { version } = require(path.join(electronRoot, "package.json"));
 
 function replaceWithCopy(source, destination) {
   fs.rmSync(destination, { recursive: true, force: true });
-  fs.cpSync(source, destination, { recursive: true, force: true });
+  // macOS .app bundles contain relative framework symlinks. Preserve them as
+  // written; resolving them here turns the bundle into paths tied to this Mac.
+  fs.cpSync(source, destination, {
+    recursive: true,
+    force: true,
+    dereference: false,
+    verbatimSymlinks: true,
+  });
   console.log(`Created ${path.relative(projectRoot, destination)}`);
 }
 
