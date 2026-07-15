@@ -6,6 +6,7 @@ import logging
 import math
 import mimetypes
 import os
+import queue
 import re
 import shutil
 import signal
@@ -129,6 +130,12 @@ ISAPI_USERNAME = os.getenv("CCTV_ISAPI_USERNAME", LIVE_USERNAME)
 ISAPI_PASSWORD = os.getenv("CCTV_ISAPI_PASSWORD", LIVE_PASSWORD)
 FFMPEG = resolve_ffmpeg(os.getenv("CCTV_FFMPEG", "ffmpeg"))
 MAX_WORKERS = max(1, env_int("CCTV_MAX_WORKERS", 6))
+LIVE_FRAME_WORKERS = max(1, env_int("CCTV_LIVE_FRAME_WORKERS", 6))
+LIVE_FRAME_TIMEOUT_SECONDS = max(3, env_int("CCTV_LIVE_FRAME_TIMEOUT_SECONDS", 8))
+# Playback streams commonly need longer than a live stream before their first
+# keyframe arrives.  This is deliberately separate from the live timeout so a
+# slow historical recording does not make the normal live wall feel sluggish.
+PLAYBACK_FRAME_TIMEOUT_SECONDS = max(8, env_int("CCTV_PLAYBACK_FRAME_TIMEOUT_SECONDS", 25))
 CAPTURE_DURATION = max(1, env_int("CCTV_CAPTURE_DURATION_SECONDS", 60))
 FRAME_TIMEOUT_SECONDS = max(5, env_int("CCTV_FRAME_TIMEOUT_SECONDS", 20))
 PLAYBACK_SEARCH_TIME_MODE = os.getenv("CCTV_PLAYBACK_SEARCH_TIME", "local").strip().lower()
@@ -141,11 +148,80 @@ CHANNELS = parse_channels(
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 20],
 )
 DEFAULT_SEPARATE = parse_channels(os.getenv("CCTV_SEPARATE_CHANNELS", ""), CHANNELS[:4])
+LIVE_FRAME_SEMAPHORE = threading.BoundedSemaphore(LIVE_FRAME_WORKERS)
+WALL_STREAM_WORKERS = max(1, env_int("CCTV_WALL_STREAM_WORKERS", 6))
+WALL_STREAM_SEMAPHORE = threading.BoundedSemaphore(WALL_STREAM_WORKERS)
+WALL_STREAM_START_TIMEOUT_SECONDS = max(5, env_int("CCTV_WALL_STREAM_START_TIMEOUT_SECONDS", 15))
+WALL_STREAM_IDLE_TIMEOUT_SECONDS = max(10, env_int("CCTV_WALL_STREAM_IDLE_TIMEOUT_SECONDS", 30))
+WALL_SESSION_LOCK = threading.Lock()
+WALL_SESSION_PROCESSES = {}
+WEB_HOST = os.getenv("CCTV_WEB_HOST", "127.0.0.1")
+WEB_PORT = env_int("CCTV_WEB_PORT", 8787)
+# The live wall occupies several long-running browser connections.  A small
+# companion listener keeps a full-resolution camera request out of that pool.
+# It is intentionally local-only and starts automatically with the main UI.
+DETAIL_PORT = env_int("CCTV_DETAIL_PORT", WEB_PORT + 1)
+DETAIL_PORT_ACTIVE = None
 SCHEDULE_TIMES = [
     item.strip()
     for item in os.getenv("CCTV_SCHEDULE_TIMES", "23:00,04:00").split(",")
     if item.strip()
 ]
+
+
+def register_wall_process(session_id, process):
+    if not session_id or not process:
+        return
+    with WALL_SESSION_LOCK:
+        WALL_SESSION_PROCESSES.setdefault(session_id, set()).add(process)
+
+
+def unregister_wall_process(session_id, process):
+    if not session_id or not process:
+        return
+    with WALL_SESSION_LOCK:
+        processes = WALL_SESSION_PROCESSES.get(session_id)
+        if not processes:
+            return
+        processes.discard(process)
+        if not processes:
+            WALL_SESSION_PROCESSES.pop(session_id, None)
+
+
+def stop_wall_session(session_id):
+    if not session_id:
+        return 0
+    with WALL_SESSION_LOCK:
+        processes = list(WALL_SESSION_PROCESSES.pop(session_id, set()))
+    for process in processes:
+        if process.poll() is None:
+            process.terminate()
+    # Do not let a replacement wall compete with decoders that are still
+    # shutting down.  The request handlers release their semaphore slots once
+    # these child processes have exited.
+    for process in processes:
+        if process.poll() is not None:
+            continue
+        try:
+            process.wait(timeout=0.75)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=0.75)
+            except subprocess.TimeoutExpired:
+                pass
+    return len(processes)
+
+
+def stop_all_wall_sessions():
+    """Release RTSP decoders when the local server is restarted or stopped."""
+    with WALL_SESSION_LOCK:
+        processes = [process for group in WALL_SESSION_PROCESSES.values() for process in group]
+        WALL_SESSION_PROCESSES.clear()
+    for process in processes:
+        if process.poll() is None:
+            process.terminate()
+    return len(processes)
 
 
 def ensure_dirs():
@@ -765,6 +841,123 @@ def playback_stream_command(channel, local_dt, duration_seconds):
     ]
 
 
+def camera_frame_bytes(channel, historical=False, local_dt=None, duration_seconds=60, timeout_seconds=None):
+    """Return one JPEG for a camera tile.
+
+    Historical recordings start at a keyframe and can take several seconds to
+    seek.  Give that path its own timeout instead of applying the short live
+    preview limit to it.
+    """
+    timeout_seconds = timeout_seconds or (
+        PLAYBACK_FRAME_TIMEOUT_SECONDS if historical else LIVE_FRAME_TIMEOUT_SECONDS
+    )
+    source = (
+        historical_recording_url(channel, local_dt, duration_seconds)
+        if historical
+        else live_url(channel)
+    )
+    # Keep only a small number of FFmpeg decoders active, but allow queued
+    # playback tiles to wait for their turn rather than fail immediately.
+    acquired = LIVE_FRAME_SEMAPHORE.acquire(timeout=timeout_seconds + 30)
+    if not acquired:
+        raise RuntimeError("กล้องกำลังรอคิวโหลดภาพ")
+    try:
+        command = [
+            FFMPEG,
+            "-hide_banner",
+            "-loglevel", "error",
+            "-rtsp_transport", "tcp",
+            "-i", source,
+            "-an",
+            "-frames:v", "1",
+            "-q:v", "5",
+            "-f", "image2pipe",
+            "-vcodec", "mjpeg",
+            "-",
+        ]
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("หมดเวลารอภาพจากกล้อง") from exc
+    except FileNotFoundError as exc:
+        raise RuntimeError("ไม่พบ ffmpeg ตามค่า CCTV_FFMPEG") from exc
+    finally:
+        LIVE_FRAME_SEMAPHORE.release()
+    if completed.returncode == 0 and completed.stdout:
+        return completed.stdout
+    detail = (completed.stderr or b"").decode("utf-8", errors="replace").strip().splitlines()
+    raise RuntimeError(redact(detail[-1] if detail else "กล้องยังไม่ส่งภาพกลับมา"))
+
+
+def wall_stream_command(channels, historical=False, local_dt=None, duration_seconds=60, columns=None):
+    """Create one MJPEG stream containing a tiled view of multiple channels.
+
+    Keeping the wall as one HTTP response avoids the browser's per-host limit
+    on long-lived MJPEG connections (which otherwise makes only the first few
+    cameras load).
+    """
+    tile_width, tile_height = 320, 180
+    columns = max(1, min(6, columns or min(4, len(channels))))
+    if historical:
+        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(channels))) as executor:
+            inputs = list(
+                executor.map(
+                    lambda channel: historical_recording_url(channel, local_dt, duration_seconds),
+                    channels,
+                )
+            )
+    else:
+        inputs = [live_url(channel) for channel in channels]
+    inputs.extend([None] * max(0, columns - len(inputs)))
+    command = [
+        FFMPEG,
+        "-hide_banner",
+        "-loglevel", "error",
+    ]
+    for source in inputs:
+        if source is None:
+            command.extend([
+                "-f", "lavfi",
+                "-i", "color=c=black:s=%dx%d:r=5" % (tile_width, tile_height),
+            ])
+        else:
+            command.extend(["-rtsp_transport", "tcp", "-thread_queue_size", "512", "-i", source])
+
+    filters = []
+    labels = []
+    for index in range(len(inputs)):
+        label = "v%d" % index
+        labels.append("[%s]" % label)
+        filters.append(
+            "[%d:v]scale=%d:%d:force_original_aspect_ratio=decrease,"
+            "pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[%s]"
+            % (index, tile_width, tile_height, tile_width, tile_height, label)
+        )
+    layout = "|".join(
+        "%d_%d" % ((index % columns) * tile_width, (index // columns) * tile_height)
+        for index in range(len(inputs))
+    )
+    filters.append(
+        "%sxstack=inputs=%d:layout=%s:fill=black[outv]"
+        % ("".join(labels), len(inputs), layout)
+    )
+    command.extend([
+        "-filter_complex", ";".join(filters),
+        "-map", "[outv]",
+        "-an",
+        "-r", "5",
+        "-q:v", "7",
+        "-f", "mpjpeg",
+        "-boundary_tag", "ffmpeg",
+        "-",
+    ])
+    return command
+
+
 def export_url(path):
     relative = path.resolve().relative_to(EXPORTS_DIR.resolve()).as_posix()
     return "/exports/" + quote(relative, safe="/")
@@ -869,10 +1062,26 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format_string, *args):
         return
 
+    def send_detail_cors_headers(self):
+        """Allow only the local UI to read frames from the companion port."""
+        origin = self.headers.get("Origin", "")
+        try:
+            parsed = urlparse(origin)
+        except ValueError:
+            return
+        if (
+            parsed.scheme == "http"
+            and parsed.hostname in {"127.0.0.1", "localhost"}
+            and parsed.port == WEB_PORT
+        ):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+
     def send_json(self, payload, status=200):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_detail_cors_headers()
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -887,6 +1096,7 @@ class Handler(BaseHTTPRequestHandler):
             body = STATIC_INDEX.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -909,7 +1119,10 @@ class Handler(BaseHTTPRequestHandler):
             content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
             self.send_response(200)
             self.send_header("Content-Type", content_type)
-            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            # app.js/app.css intentionally have stable names to keep the local
+            # project small. Do not mark them immutable or a browser can keep
+            # an obsolete UI after the next build.
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -925,10 +1138,169 @@ class Handler(BaseHTTPRequestHandler):
                 "channels": CHANNELS,
                 "timezone": TIMEZONE_NAME,
                 "captures_dir": str(CAPTURES_DIR),
+                "detail_port": DETAIL_PORT_ACTIVE,
             })
             return
         if parsed.path == "/api/results":
             self.send_json({"batches": list_result_batches()})
+            return
+        if parsed.path == "/api/camera-frame":
+            query = parse_qs(parsed.query)
+            try:
+                channel = int(query.get("channel", [""])[0])
+            except (TypeError, ValueError):
+                self.send_json({"error": "ระบุหมายเลขกล้องไม่ถูกต้อง"}, 400)
+                return
+            if channel not in CHANNELS:
+                self.send_json({"error": "ไม่พบหมายเลขกล้องนี้"}, 404)
+                return
+            mode = query.get("mode", ["live"])[0].strip().lower()
+            historical = mode == "playback"
+            local_dt = None
+            duration = 60
+            if historical:
+                try:
+                    local_dt = valid_datetime(
+                        query.get("date", [""])[0],
+                        query.get("time", [""])[0],
+                    )
+                    duration = max(1, min(300, int(query.get("duration", ["60"])[0])))
+                except (TypeError, ValueError):
+                    self.send_json({"error": "ระบุวันเวลาย้อนหลังไม่ถูกต้อง"}, 400)
+                    return
+            try:
+                frame = camera_frame_bytes(channel, historical, local_dt, duration)
+            except RuntimeError as exc:
+                self.send_json({"error": str(exc)}, 504)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_detail_cors_headers()
+            self.send_header("Content-Length", str(len(frame)))
+            self.end_headers()
+            try:
+                self.wfile.write(frame)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+        if parsed.path == "/api/wall-stream":
+            query = parse_qs(parsed.query)
+            session_id = query.get("session", [""])[0]
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", session_id or ""):
+                session_id = ""
+            requested_channels = query.get(
+                "channels", [",".join(str(channel) for channel in CHANNELS)]
+            )[0]
+            channels = []
+            for value in requested_channels.split(","):
+                try:
+                    channel = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if channel in CHANNELS and channel not in channels:
+                    channels.append(channel)
+            if not channels:
+                self.send_json({"error": "ไม่พบหมายเลขกล้องที่ใช้งานได้"}, 400)
+                return
+            try:
+                columns = int(query.get("columns", [""])[0])
+            except (TypeError, ValueError):
+                columns = None
+            mode = query.get("mode", ["live"])[0].strip().lower()
+            historical = mode == "playback"
+            local_dt = None
+            duration = 60
+            if historical:
+                try:
+                    local_dt = valid_datetime(
+                        query.get("date", [""])[0],
+                        query.get("time", [""])[0],
+                    )
+                    duration = max(1, min(300, int(query.get("duration", ["60"])[0])))
+                except (TypeError, ValueError):
+                    self.send_json({"error": "ระบุวันเวลาย้อนหลังไม่ถูกต้อง"}, 400)
+                    return
+            # A wall is six long-lived streams.  When the browser refreshes,
+            # wait briefly for obsolete streams to notice the closed client
+            # instead of launching another full set against the NVR.
+            if not WALL_STREAM_SEMAPHORE.acquire(timeout=12):
+                self.send_json({"error": "กำลังปิดสตรีมเดิม โปรดลองอีกครั้ง"}, 503)
+                return
+            process = None
+            try:
+                process = subprocess.Popen(
+                    wall_stream_command(
+                        channels,
+                        historical,
+                        local_dt,
+                        duration,
+                        columns=columns,
+                    ),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    bufsize=0,
+                )
+                register_wall_process(session_id, process)
+                self.send_response(200)
+                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=ffmpeg")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                chunks = queue.Queue(maxsize=8)
+
+                def read_stream_output():
+                    while True:
+                        chunk = process.stdout.read(8192)
+                        while True:
+                            try:
+                                chunks.put(chunk, timeout=0.2)
+                                break
+                            except queue.Full:
+                                if process.poll() is not None:
+                                    return
+                        if not chunk:
+                            return
+
+                threading.Thread(target=read_stream_output, daemon=True).start()
+                try:
+                    # Do not write a heartbeat before the first JPEG frame:
+                    # Chromium treats that as a malformed MJPEG image. A stuck
+                    # decoder must be released so it cannot keep the wall at
+                    # "กำลังเชื่อมต่อ 0/6" forever.
+                    chunk = chunks.get(timeout=WALL_STREAM_START_TIMEOUT_SECONDS)
+                except queue.Empty:
+                    LOGGER.warning("wall stream เริ่มภาพไม่ทันภายใน %d วินาที", WALL_STREAM_START_TIMEOUT_SECONDS)
+                    return
+
+                while chunk:
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    try:
+                        chunk = chunks.get(timeout=WALL_STREAM_IDLE_TIMEOUT_SECONDS)
+                    except queue.Empty:
+                        LOGGER.warning("wall stream หยุดส่งภาพเกิน %d วินาที", WALL_STREAM_IDLE_TIMEOUT_SECONDS)
+                        break
+            except RuntimeError as exc:
+                if process:
+                    process.kill()
+                if not self.wfile.closed:
+                    self.send_json({"error": str(exc)}, 404)
+            except FileNotFoundError:
+                if not self.wfile.closed:
+                    self.send_json({"error": "ไม่พบ ffmpeg ตามค่า CCTV_FFMPEG"}, 500)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                if process and process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                unregister_wall_process(session_id, process)
+                WALL_STREAM_SEMAPHORE.release()
             return
         if parsed.path == "/api/live-stream":
             try:
@@ -1052,6 +1424,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/wall-session/close":
+            session_id = parse_qs(parsed.query).get("session", [""])[0]
+            if re.fullmatch(r"[A-Za-z0-9_-]{1,96}", session_id or ""):
+                stopped = stop_wall_session(session_id)
+            else:
+                stopped = 0
+            self.send_json({"ok": True, "stopped": stopped})
+            return
         try:
             payload = self.read_json()
             if parsed.path == "/api/capture":
@@ -1126,24 +1506,39 @@ class Handler(BaseHTTPRequestHandler):
 def stop_handler(_signum, _frame):
     STOP_EVENT.set()
     CANCEL_EVENT.set()
+    stop_all_wall_sessions()
     if SERVER is not None:
         threading.Thread(target=SERVER.shutdown, daemon=True).start()
 
 
 def main():
-    global SERVER
+    global SERVER, DETAIL_PORT_ACTIVE
     signal.signal(signal.SIGINT, stop_handler)
     signal.signal(signal.SIGTERM, stop_handler)
     threading.Thread(target=scheduler_loop, daemon=True).start()
-    web_host = os.getenv("CCTV_WEB_HOST", "127.0.0.1")
-    web_port = env_int("CCTV_WEB_PORT", 8787)
-    server = ThreadingHTTPServer((web_host, web_port), Handler)
+    server = ThreadingHTTPServer((WEB_HOST, WEB_PORT), Handler)
     SERVER = server
-    LOGGER.info("CCTV UI เปิดที่ http://%s:%d", web_host, web_port)
+    detail_server = None
+    if WEB_HOST in {"127.0.0.1", "localhost"} and DETAIL_PORT != WEB_PORT:
+        try:
+            detail_server = ThreadingHTTPServer((WEB_HOST, DETAIL_PORT), Handler)
+            threading.Thread(
+                target=detail_server.serve_forever,
+                kwargs={"poll_interval": 0.5},
+                daemon=True,
+            ).start()
+            DETAIL_PORT_ACTIVE = DETAIL_PORT
+            LOGGER.info("CCTV detail frames เปิดที่ http://%s:%d", WEB_HOST, DETAIL_PORT)
+        except OSError as exc:
+            LOGGER.warning("ไม่สามารถเปิดช่องภาพรายละเอียด: %s", exc)
+    LOGGER.info("CCTV UI เปิดที่ http://%s:%d", WEB_HOST, WEB_PORT)
     try:
         server.serve_forever(poll_interval=0.5)
     finally:
         server.server_close()
+        if detail_server is not None:
+            detail_server.shutdown()
+            detail_server.server_close()
         STOP_EVENT.set()
 
 
