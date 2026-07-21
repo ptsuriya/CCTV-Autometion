@@ -7,6 +7,7 @@ import math
 import mimetypes
 import os
 import queue
+import random
 import re
 import shutil
 import signal
@@ -141,6 +142,10 @@ LIVE_FRAME_TIMEOUT_SECONDS = max(3, env_int("CCTV_LIVE_FRAME_TIMEOUT_SECONDS", 8
 PLAYBACK_FRAME_TIMEOUT_SECONDS = max(8, env_int("CCTV_PLAYBACK_FRAME_TIMEOUT_SECONDS", 25))
 CAPTURE_DURATION = max(1, env_int("CCTV_CAPTURE_DURATION_SECONDS", 60))
 FRAME_TIMEOUT_SECONDS = max(5, env_int("CCTV_FRAME_TIMEOUT_SECONDS", 20))
+# The date/time burned into a camera frame belongs to the camera/NVR stream
+# and cannot be changed after FFmpeg receives the frame. The quick historical
+# mode opts into cropping this strip; all other modes preserve the source.
+TIMESTAMP_CROP_TOP_PIXELS = max(1, env_int("CCTV_TIMESTAMP_CROP_TOP_PIXELS", 110))
 PLAYBACK_SEARCH_TIME_MODE = os.getenv("CCTV_PLAYBACK_SEARCH_TIME", "local").strip().lower()
 if PLAYBACK_SEARCH_TIME_MODE not in {"local", "utc"}:
     PLAYBACK_SEARCH_TIME_MODE = "local"
@@ -170,6 +175,13 @@ SCHEDULE_TIMES = [
     for item in os.getenv("CCTV_SCHEDULE_TIMES", "23:00,04:00").split(",")
     if item.strip()
 ]
+# "ย้อนหลังไม่ระบุวัน" mode: when the user leaves the date blank the backend
+# picks a random past day so repeated runs do not always land on the same date.
+# The window is [earliest, yesterday] and never includes today.  RANDOM_START_DATE
+# is the hard floor of what the NVR still keeps (edit in .env as retention rolls);
+# RANDOM_MAX_DAYS caps how far back we reach even if the floor is older.
+RANDOM_START_DATE = os.getenv("CCTV_RANDOM_START_DATE", "").strip()
+RANDOM_MAX_DAYS = max(1, env_int("CCTV_RANDOM_MAX_DAYS", 30))
 
 
 def register_wall_process(session_id, process):
@@ -448,7 +460,23 @@ def historical_recording_url(channel, local_dt, duration_seconds):
     return "rtsp://%s%s:%d%s" % (credentials, PLAYBACK_HOST, PLAYBACK_PORT, path_query)
 
 
-def capture_frame(channel, output_path, historical, local_dt, duration_seconds):
+def timestamp_filter(crop_timestamp=False):
+    """Return the optional FFmpeg filter used by quick historical captures.
+
+    CCTV timestamp text is part of the encoded pixels, not JPEG metadata. The
+    installed FFmpeg build has no drawtext filter, so cropping is the portable
+    fallback. The min() expression keeps low-resolution cameras valid too.
+    """
+    if not crop_timestamp:
+        return None
+    crop_pixels = TIMESTAMP_CROP_TOP_PIXELS
+    return (
+        "crop=in_w:in_h-min(in_h-2\\,%d):0:min(in_h-2\\,%d)"
+        % (crop_pixels, crop_pixels)
+    )
+
+
+def capture_frame(channel, output_path, historical, local_dt, duration_seconds, crop_timestamp=False):
     if CANCEL_EVENT.is_set():
         raise JobCancelled()
     try:
@@ -470,9 +498,11 @@ def capture_frame(channel, output_path, historical, local_dt, duration_seconds):
         "1",
         "-q:v",
         "2",
-        "-y",
-        str(temporary_path),
     ]
+    video_filter = timestamp_filter(crop_timestamp)
+    if video_filter:
+        command.extend(["-vf", video_filter])
+    command.extend(["-y", str(temporary_path)])
     process = None
     try:
         process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
@@ -557,7 +587,16 @@ def make_collage(image_paths, output_path):
     return output_path.exists()
 
 
-def capture_batch(local_dt, historical, separate_channels, duration_seconds, job_id, progress_base=0, progress_span=100):
+def capture_batch(
+    local_dt,
+    historical,
+    separate_channels,
+    duration_seconds,
+    job_id,
+    progress_base=0,
+    progress_span=100,
+    crop_timestamp=False,
+):
     if CANCEL_EVENT.is_set():
         raise JobCancelled()
     date_name = local_dt.strftime("%Y-%m-%d")
@@ -578,7 +617,14 @@ def capture_batch(local_dt, historical, separate_channels, duration_seconds, job
             raise JobCancelled()
         filename = "camera-%02d_%s.jpg" % (channel, local_dt.strftime("%Y-%m-%d_%H-%M-%S"))
         output_path = overview_dir / filename
-        ok, error = capture_frame(channel, output_path, historical, local_dt, duration_seconds)
+        ok, error = capture_frame(
+            channel,
+            output_path,
+            historical,
+            local_dt,
+            duration_seconds,
+            crop_timestamp=crop_timestamp,
+        )
         return channel, output_path if ok else None, error
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -607,6 +653,8 @@ def capture_batch(local_dt, historical, separate_channels, duration_seconds, job
         "successful_channels": sorted(frame_paths),
         "failed_channels": failures,
         "collage_created": collage_ok,
+        "timestamp_mode": "crop" if crop_timestamp else "keep",
+        "timestamp_crop_top_pixels": TIMESTAMP_CROP_TOP_PIXELS if crop_timestamp else 0,
     }
     manifest_path = batch_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -632,7 +680,7 @@ def run_job(job_id, local_dt, historical, separate_channels, duration_seconds):
         set_job(running=False, progress=0, message="งานล้มเหลว", error=str(exc))
 
 
-def run_night_job(job_id, capture_times, separate_channels, duration_seconds):
+def run_night_job(job_id, capture_times, separate_channels, duration_seconds, crop_timestamp=False):
     manifests = []
     failures = {}
     try:
@@ -650,6 +698,7 @@ def run_night_job(job_id, capture_times, separate_channels, duration_seconds):
                 job_id,
                 progress_base=progress_base,
                 progress_span=50,
+                crop_timestamp=crop_timestamp,
             )
             manifests.append(str(manifest_path))
             if batch_failures:
@@ -704,7 +753,7 @@ def start_job(local_dt, historical, separate_channels, duration_seconds):
     return True, job_id
 
 
-def start_night_job(capture_times, separate_channels, duration_seconds):
+def start_night_job(capture_times, separate_channels, duration_seconds, crop_timestamp=False):
     reachable, detail = playback_endpoint_status()
     if not reachable:
         return False, detail
@@ -724,7 +773,7 @@ def start_night_job(capture_times, separate_channels, duration_seconds):
         })
     thread = threading.Thread(
         target=run_night_job,
-        args=(job_id, capture_times, valid_separate_channels(separate_channels), duration_seconds),
+        args=(job_id, capture_times, valid_separate_channels(separate_channels), duration_seconds, crop_timestamp),
         daemon=True,
     )
     thread.start()
@@ -736,6 +785,30 @@ def valid_datetime(date_text, time_text):
         return datetime.strptime("%s %s" % (date_text, time_text), "%Y-%m-%d %H:%M").replace(tzinfo=LOCAL_TZ)
     except ValueError as exc:
         raise ValueError("วันที่หรือเวลาไม่ถูกต้อง") from exc
+
+
+def random_capture_date():
+    """Pick a random past day in [earliest, yesterday], excluding today.
+
+    earliest is the later of RANDOM_START_DATE (the NVR retention floor) and
+    today - RANDOM_MAX_DAYS, so we never reach a day the recorder has purged.
+    Returns a "%Y-%m-%d" string.
+    """
+    today = datetime.now(LOCAL_TZ).date()
+    yesterday = today - timedelta(days=1)
+    earliest = today - timedelta(days=RANDOM_MAX_DAYS)
+    if RANDOM_START_DATE:
+        try:
+            floor = datetime.strptime(RANDOM_START_DATE, "%Y-%m-%d").date()
+            if floor > earliest:
+                earliest = floor
+        except ValueError:
+            pass
+    if earliest > yesterday:
+        earliest = yesterday
+    span_days = (yesterday - earliest).days
+    chosen = earliest + timedelta(days=random.randint(0, span_days))
+    return chosen.strftime("%Y-%m-%d")
 
 
 def clock_minutes(value, allow_24=False):
@@ -874,10 +947,12 @@ def camera_frame_bytes(channel, historical=False, local_dt=None, duration_second
             "-an",
             "-frames:v", "1",
             "-q:v", "5",
+        ]
+        command.extend([
             "-f", "image2pipe",
             "-vcodec", "mjpeg",
             "-",
-        ]
+        ])
         completed = subprocess.run(
             command,
             stdout=subprocess.PIPE,
@@ -1451,7 +1526,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"started": started, "detail": detail}, 202 if started else 409)
                 return
             if parsed.path == "/api/capture-night":
-                night_date = payload.get("date", "")
+                night_date = (payload.get("date") or "").strip()
+                # Blank date + random flag → let the server choose a past day.
+                if not night_date and payload.get("random"):
+                    night_date = random_capture_date()
                 first_capture = payload.get("capture_time_1", "23:00")
                 second_capture = payload.get("capture_time_2", "04:00")
                 window_1_start = payload.get("window_1_start", "22:00")
@@ -1465,8 +1543,14 @@ class Handler(BaseHTTPRequestHandler):
                 second_dt = valid_datetime(second_date, second_capture)
                 duration = max(1, int(payload.get("duration_seconds", CAPTURE_DURATION)))
                 selected = valid_separate_channels(payload.get("separate_channels", DEFAULT_SEPARATE))
-                started, detail = start_night_job([first_dt, second_dt], selected, duration)
-                self.send_json({"started": started, "detail": detail}, 202 if started else 409)
+                crop_timestamp = payload.get("mode") == "quick"
+                started, detail = start_night_job(
+                    [first_dt, second_dt],
+                    selected,
+                    duration,
+                    crop_timestamp=crop_timestamp,
+                )
+                self.send_json({"started": started, "detail": detail, "date": night_date}, 202 if started else 409)
                 return
             if parsed.path == "/api/export":
                 export_path, round_count = export_job(payload.get("job_id"))

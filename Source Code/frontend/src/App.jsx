@@ -81,6 +81,7 @@ function App() {
   const [scheduleDraft, setScheduleDraft] = useState(["23:00", "04:00"]);
   const [scheduleDirty, setScheduleDirty] = useState(false);
   const [nightDate, setNightDate] = useState(localDateValue());
+  const [quickDate, setQuickDate] = useState(""); // ว่าง = สุ่มวันย้อนหลัง
   const [capture1, setCapture1] = useState("23:00");
   const [capture2, setCapture2] = useState("04:00");
   const [window1, setWindow1] = useState(["22:00", "23:59"]);
@@ -183,15 +184,17 @@ function App() {
         }).then(() => setScheduleDirty(false)),
       server.schedule.enabled ? "หยุดรันข้ามคืนแล้ว" : "เปิดรันข้ามคืนแล้ว",
     );
-  const runNight = () =>
+  const runNightWithDate = (date, actionName, randomWhenEmpty = false) =>
     runAction(
-      "historical",
-      () =>
-        requestJson("/api/capture-night", {
+      actionName,
+      async () => {
+        const data = await requestJson("/api/capture-night", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            date: nightDate,
+            mode: actionName,
+            date,
+            random: randomWhenEmpty,
             window_1_start: window1[0],
             window_1_end: window1[1],
             capture_time_1: capture1,
@@ -200,9 +203,20 @@ function App() {
             capture_time_2: capture2,
             duration_seconds: Number(duration),
           }),
-        }),
+        });
+        // โหมดสุ่ม: เซิร์ฟเวอร์คืนวันที่ที่เลือกกลับมา แสดงให้ผู้ใช้เห็น
+        if (randomWhenEmpty && !date && data?.date) {
+          setToast({
+            type: "success",
+            message: `สุ่มวันย้อนหลัง: ${thaiDateLabel(data.date)}`,
+          });
+        }
+      },
       "เริ่มค้นหาย้อนหลัง 2 ช่วงเวลาแล้ว",
     );
+  const runNight = () => runNightWithDate(nightDate, "historical");
+  // โหมด "ไม่ระบุวัน": ปล่อยว่าง = ให้เซิร์ฟเวอร์สุ่มวัน, กรอกวัน = ใช้วันนั้นทับ
+  const runQuick = () => runNightWithDate(quickDate, "quick", true);
   const captureLive = () =>
     runAction(
       "live-capture",
@@ -328,6 +342,12 @@ function App() {
       label: "บันทึกย้อนหลัง",
       caption: "เลือกวันและรอบเวร",
       icon: FileClock,
+    },
+    {
+      id: "quick",
+      label: "ย้อนหลังไม่ระบุวัน",
+      caption: "ระบุวัน–เวลาเอง หรือสุ่มวันย้อนหลัง",
+      icon: Clock3,
     },
   ];
 
@@ -479,7 +499,7 @@ function App() {
           </section>
 
           <section className="glass-panel mt-6 overflow-hidden rounded-[28px]">
-            <div className="grid border-b border-white/[0.08] bg-black/10 sm:grid-cols-3">
+            <div className="grid border-b border-white/[0.08] bg-black/10 sm:grid-cols-2 lg:grid-cols-4">
               {tabs.map(({ id, label, caption, icon: Icon }) => (
                 <button
                   key={id}
@@ -533,6 +553,25 @@ function App() {
                 setDuration={setDuration}
                 onRun={runNight}
                 busy={action === "historical"}
+              />
+            )}
+            {mode === "quick" && (
+              <HistoricalPanel
+                optionalDate
+                nightDate={quickDate}
+                setNightDate={setQuickDate}
+                capture1={capture1}
+                setCapture1={setCapture1}
+                capture2={capture2}
+                setCapture2={setCapture2}
+                window1={window1}
+                setWindow1={setWindow1}
+                window2={window2}
+                setWindow2={setWindow2}
+                duration={duration}
+                setDuration={setDuration}
+                onRun={runQuick}
+                busy={action === "quick"}
               />
             )}
             {mode === "live" && (
@@ -794,23 +833,47 @@ function HistoricalPanel({
   setDuration,
   onRun,
   busy,
+  optionalDate = false,
 }) {
   return (
     <div className="p-5 sm:p-8">
       <SectionHeading
         eyebrow="nvr playback"
-        title="บันทึกย้อนหลังแบบข้ามคืน"
-        description="เลือกวันเริ่มต้น ระบบจะค้นหารอบที่ 1 ในวันนั้น และรอบที่ 2 ในวันถัดไป ตามช่วงเวลาที่กำหนด"
-        icon={FileClock}
+        title={optionalDate ? "บันทึกย้อนหลัง (ไม่ระบุวัน)" : "บันทึกย้อนหลังแบบข้ามคืน"}
+        description={
+          optionalDate
+            ? "ปล่อยช่องวันว่างไว้ ระบบจะสุ่มวันย้อนหลังให้อัตโนมัติ หรือกรอกวันเอง เช่น 1/6/2569 — รอบ 2 จะอยู่ในวันถัดไปเสมอ และตัด timestamp เดิมด้านบนภาพออก"
+            : "เลือกวันเริ่มต้นและเวลาเอง เช่น 1/6/2569 ระบบจะค้นหารอบที่ 1 ในวันนั้น และรอบที่ 2 ในวันถัดไป"
+        }
+        icon={optionalDate ? Clock3 : FileClock}
       />
       <div className="mt-7 grid gap-4 sm:grid-cols-[1fr_190px]">
-        <InputField
-          label="วันบันทึก / วันเริ่มต้น"
-          type="date"
-          value={nightDate}
-          onChange={setNightDate}
-          helper="รอบ 04:00 จะอยู่ในวันถัดไป"
-        />
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <InputField
+              label={optionalDate ? "วันบันทึก (ปล่อยว่าง = สุ่ม)" : "วันบันทึก / วันเริ่มต้น"}
+              type="date"
+              value={nightDate}
+              onChange={setNightDate}
+              helper={
+                optionalDate
+                  ? "ว่าง = สุ่มวันย้อนหลังอัตโนมัติ"
+                  : "พ.ศ. 2569 = ค.ศ. 2026 · รอบ 04:00 อยู่วันถัดไป"
+              }
+            />
+          </div>
+          {optionalDate && nightDate && (
+            <button
+              type="button"
+              onClick={() => setNightDate("")}
+              className="mb-6 inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.05] px-3 text-xs font-bold text-slate-300 transition hover:bg-white/[0.1]"
+              title="ล้างวันเพื่อกลับไปสุ่ม"
+            >
+              <X size={14} />
+              สุ่ม
+            </button>
+          )}
+        </div>
         <InputField
           label="ค้นหาเผื่อ (วินาที)"
           type="number"
